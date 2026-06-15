@@ -1470,15 +1470,26 @@ def fetch_live_token_price(token_id):
         return None
 
 
-@st.cache_data(ttl=90, show_spinner=False)
-def fetch_price_history(token_id):
-    """Return list[{t,p}] in cents. Endpoint shape may vary; fails soft."""
+_PMHIST_RANGES = {
+    "1H": ("1h", 1),
+    "6H": ("6h", 5),
+    "1D": ("1d", 15),
+    "1W": ("1w", 60),
+    "1M": ("1m", 180),
+    "MAX": ("max", 720),
+}
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_price_history(token_id, rng="1D"):
+    """Polymarket CLOB price history -> list[{t,p}] (t=unix sec, p=cents). Fails soft."""
     token_id = str(token_id or "").strip()
     if not token_id:
         return []
+    interval, fidelity = _PMHIST_RANGES.get(str(rng).upper(), ("1d", 15))
     attempts = [
-        ("https://clob.polymarket.com/prices-history", {"market": token_id, "interval": "1d", "fidelity": 15}),
-        ("https://clob.polymarket.com/prices-history", {"market": token_id, "fidelity": 15}),
+        ("https://clob.polymarket.com/prices-history", {"market": token_id, "interval": interval, "fidelity": fidelity}),
+        ("https://clob.polymarket.com/prices-history", {"market": token_id, "fidelity": fidelity}),
     ]
     for base, params in attempts:
         try:
@@ -1493,8 +1504,7 @@ def fetch_price_history(token_id):
             for p in hist:
                 if not isinstance(p, dict):
                     continue
-                raw_price = p.get("p", p.get("price", p.get("value")))
-                pc = _as_cents(raw_price)
+                pc = _as_cents(p.get("p", p.get("price", p.get("value"))))
                 if pc is None:
                     continue
                 out.append({"t": p.get("t", p.get("timestamp", len(out))), "p": round(pc, 2)})
@@ -1503,7 +1513,6 @@ def fetch_price_history(token_id):
         except Exception:
             continue
     return []
-
 
 def evaluate_live_price(entry_result, live_price):
     """Deterministic live re-evaluation. Does not call Claude."""
@@ -1527,15 +1536,25 @@ def evaluate_live_price(entry_result, live_price):
 
 
 def render_live_price_panel(wm):
-    """Show live quote, deterministic edge update, and optional history chart under analysis result."""
+    """Live mid + edge update + real Polymarket price-history chart. Auto-refreshes; read-only."""
     wm = wm if isinstance(wm, dict) else {}
     tok = str(wm.get("token_id", "") or "")
-    r = st.session_state.get("last_entry", {}) if isinstance(st.session_state.get("last_entry", {}), dict) else {}
     if not tok:
         st.markdown(line(t("실시간 추적 token_id가 없습니다.", "No token_id for live tracking."), "w"), unsafe_allow_html=True)
         return
-    c1, c2 = st.columns([3, 1])
-    with c2:
+
+    ranges = ["1H", "6H", "1D", "1W", "1M", "MAX"]
+    cc1, cc2 = st.columns([3, 1])
+    with cc1:
+        rng = st.radio(
+            t("기간", "Range"),
+            ranges,
+            index=2,
+            horizontal=True,
+            key=f"live_rng_{tok}",
+            label_visibility="collapsed",
+        )
+    with cc2:
         if st.button(t("새로고침", "Refresh"), key=f"live_refresh_{tok}", use_container_width=True):
             try:
                 fetch_live_token_price.clear()
@@ -1543,27 +1562,101 @@ def render_live_price_panel(wm):
             except Exception:
                 pass
             st.rerun()
-    lp = fetch_live_token_price(tok)
-    if not lp or lp.get("mid") is None:
-        st.markdown(line(t("실시간 호가 없음 — Polymarket에서 직접 확인 필요.", "No live book — verify on Polymarket."), "w"), unsafe_allow_html=True)
-        return
-    live = float(lp["mid"])
-    ev = evaluate_live_price(r, live)
-    st.markdown(
-        '<div class="stats">'
-        + stat(t("실시간 중간가", "Live mid"), cents(live), t(f"분석시 {cents(wm.get('entry_price', 0))}", f"at analysis {cents(wm.get('entry_price', 0))}"))
-        + stat("Bid / Ask", f"{cents(float(lp['bid'])) if lp.get('bid') is not None else '—'} / {cents(float(lp['ask'])) if lp.get('ask') is not None else '—'}", f"{t('스프레드','spread')} {cents(float(lp['spread'])) if lp.get('spread') is not None else '—'}")
-        + stat(t("실시간 Edge", "Live edge"), f"{ev['edge']:+.1f}¢", t("적정가 대비", "vs fair"), "pos" if ev['edge'] >= 3 else "neg" if ev['edge'] < 0 else "")
-        + stat(t("분석 후 변동", "Move since"), f"{ev['move']:+.1f}¢", t("시장 가격 변화", "market move"), "pos" if ev['move'] >= 0 else "neg")
-        + "</div>", unsafe_allow_html=True)
-    st.markdown(meter(t("시장 판단 vs 내 판단", "Market view vs my view"), live, ev["kind"], ev["status"], unit="¢"), unsafe_allow_html=True)
-    hist = fetch_price_history(tok)
-    if hist:
+    auto = st.checkbox(t("자동 갱신 (15초)", "Auto-refresh (15s)"), value=True, key=f"live_auto_{tok}")
+
+    def _body():
+        lp = fetch_live_token_price(tok)
+        if not lp or lp.get("mid") is None:
+            st.markdown(line(t("실시간 호가 없음 — Polymarket에서 직접 확인 필요.", "No live book — verify on Polymarket."), "w"), unsafe_allow_html=True)
+            return
+        live = float(lp["mid"])
+        r = st.session_state.get("last_entry", {})
+        r = r if isinstance(r, dict) else {}
+        ev = evaluate_live_price(r, live)
+        st.markdown(
+            '<div class="stats">'
+            + stat(t("실시간 중간가", "Live mid"), cents(live), t(f"분석시 {cents(wm.get('entry_price', 0))}", f"at analysis {cents(wm.get('entry_price', 0))}"))
+            + stat("Bid / Ask", f"{cents(float(lp['bid'])) if lp.get('bid') is not None else '—'} / {cents(float(lp['ask'])) if lp.get('ask') is not None else '—'}", f"{t('스프레드','spread')} {cents(float(lp['spread'])) if lp.get('spread') is not None else '—'}")
+            + stat(t("실시간 Edge", "Live edge"), f"{ev['edge']:+.1f}¢", t("적정가 대비", "vs fair"), "pos" if ev['edge'] >= 3 else "neg" if ev['edge'] < 0 else "")
+            + stat(t("분석 후 변동", "Move since"), f"{ev['move']:+.1f}¢", t("시장 가격 변화", "market move"), "pos" if ev['move'] >= 0 else "neg")
+            + "</div>", unsafe_allow_html=True)
+        st.markdown(meter(t("시장 판단 vs 내 판단", "Market view vs my view"), live, ev["kind"], ev["status"], unit="¢"), unsafe_allow_html=True)
+
+        hist = fetch_price_history(tok, rng)
+        if not hist:
+            st.markdown(f'<div class="footnote">{t("이 기간의 가격 히스토리가 아직 없습니다.", "No price history for this range yet.")}</div>', unsafe_allow_html=True)
+            return
+        dfh = pd.DataFrame(hist)
         try:
-            dfh = pd.DataFrame(hist)
-            st.line_chart(dfh.set_index("t")["p"], height=160)
+            # Polymarket usually returns unix seconds. Guard ms timestamps too.
+            t_numeric = pd.to_numeric(dfh["t"], errors="coerce")
+            unit = "ms" if t_numeric.dropna().max() and t_numeric.dropna().max() > 10**11 else "s"
+            dfh["ts"] = pd.to_datetime(t_numeric, unit=unit, errors="coerce")
+            dfh = dfh.dropna(subset=["ts", "p"])
+        except Exception:
+            dfh["ts"] = pd.to_datetime(dfh.index, unit="s", errors="coerce")
+        if dfh.empty:
+            st.markdown(f'<div class="footnote">{t("차트로 표시할 수 있는 가격 데이터가 없습니다.", "No chartable price data.")}</div>', unsafe_allow_html=True)
+            return
+        try:
+            import altair as alt
+            lo, hi = float(dfh["p"].min()), float(dfh["p"].max())
+            pad = max(1.5, (hi - lo) * 0.2)
+            dom = [max(0.0, lo - pad), min(100.0, hi + pad)]
+            base = alt.Chart(dfh).encode(
+                x=alt.X(
+                    "ts:T",
+                    title=None,
+                    axis=alt.Axis(grid=False, labelColor="#a2a5af", tickColor="#e9eaee", domainColor="#e9eaee"),
+                )
+            )
+            area = base.mark_area(
+                line={"color": "#3b4ef0", "strokeWidth": 2},
+                color=alt.Gradient(
+                    gradient="linear",
+                    x1=1,
+                    x2=1,
+                    y1=1,
+                    y2=0,
+                    stops=[
+                        alt.GradientStop(color="#ffffff", offset=0),
+                        alt.GradientStop(color="#e9ecfe", offset=1),
+                    ],
+                ),
+            ).encode(
+                y=alt.Y(
+                    "p:Q",
+                    title=None,
+                    scale=alt.Scale(domain=dom),
+                    axis=alt.Axis(grid=True, gridColor="#f0f1f4", labelColor="#a2a5af", tickColor="#e9eaee", domainColor="#e9eaee"),
+                ),
+                tooltip=[alt.Tooltip("ts:T", title="time"), alt.Tooltip("p:Q", title="¢", format=".1f")],
+            )
+            layers = [area]
+            try:
+                fairf = float(wm.get("fair_price") or 0)
+            except Exception:
+                fairf = 0.0
+            if fairf:
+                layers.append(
+                    alt.Chart(pd.DataFrame({"y": [fairf]}))
+                    .mark_rule(strokeDash=[4, 4], color="#a2a5af")
+                    .encode(y="y:Q")
+                )
+            st.altair_chart(alt.layer(*layers).properties(height=210).configure_view(strokeWidth=0), use_container_width=True)
+        except Exception:
+            st.line_chart(dfh.set_index("ts")["p"], height=210)
+
+    frag = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+    if auto and frag:
+        try:
+            frag(run_every=15)(_body)()
+            return
         except Exception:
             pass
+    _body()
+    if auto and not frag:
+        st.markdown(f'<div class="footnote">{t("자동 갱신은 Streamlit 1.37+에서 지원됩니다. 새로고침 버튼을 눌러 갱신하세요.", "Auto-refresh needs Streamlit 1.37+. Use the Refresh button.")}</div>', unsafe_allow_html=True)
 
 
 def _first_present(obj, keys, default=""):
