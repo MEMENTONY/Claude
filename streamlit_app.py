@@ -2106,6 +2106,125 @@ def _norm_price_cent(p):
     return round(p * 100, 2) if 0 < p <= 1 else round(p, 2)
 
 
+
+def parse_pasted_activity(text):
+    """Parse copied Polymarket activity text into auto_trades-shaped rows.
+
+    Blocks are split on markdown links [Title](URL). Each block must yield an
+    outcome+price line (¢), a shares line (주/shares), and a side word
+    (매수/매도/Buy/Sell/Bought/Sold). The +$/−$ figure Polymarket shows is kept
+    for display only and never used in P&L — cost is recomputed as shares×price.
+    Blocks missing a required field are returned as 'unparsed' so nothing is
+    silently invented. Relative times (e.g. '19분 전') are approximated for
+    date grouping only.
+    """
+    rows, unparsed = [], []
+    src = str(text or "")
+    if not src.strip():
+        return rows, {"ok": 0, "buy": 0, "sell": 0, "unparsed": unparsed}
+
+    link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+    links = list(link_re.finditer(src))
+    if not links:
+        return rows, {
+            "ok": 0,
+            "buy": 0,
+            "sell": 0,
+            "unparsed": [t("[제목](주소) 형식 링크를 찾지 못했습니다.", "No [title](url) links found.")],
+        }
+
+    now_kst = datetime.now(KST)
+    price_re = re.compile(r"([^\n]*?)(\d+(?:\.\d+)?)\s*(?:¢|cents?|c)(?![a-zA-Z])")
+    shares_re = re.compile(r"(\d+(?:\.\d+)?)\s*(?:주|shares?)\b", re.IGNORECASE)
+    money_re = re.compile(r"([+\-]?)\s*\$\s*([\d,]+(?:\.\d+)?)")
+    rel_re = re.compile(
+        r"(\d+)\s*(분|시간|시|일|주|개월|달|min|minute|minutes|hour|hours|day|days|week|weeks|month|months)",
+        re.IGNORECASE,
+    )
+
+    for i, m in enumerate(links):
+        title = m.group(1).strip()
+        url = m.group(2).strip()
+        slug = extract_slug(url)
+        block = src[m.end() : (links[i + 1].start() if i + 1 < len(links) else len(src))]
+        low = block.lower()
+
+        outcome, price = "", None
+        pm = price_re.search(block)
+        if pm:
+            outcome = re.sub(r"[·•|,\-–—:\s]+$", "", pm.group(1))
+            outcome = re.sub(r"^[·•|,\-–—:\s]+", "", outcome).strip()
+            try:
+                price = float(pm.group(2))
+            except ValueError:
+                price = None
+
+        shares = None
+        sm = shares_re.search(block)
+        if sm:
+            try:
+                shares = float(sm.group(1))
+            except ValueError:
+                shares = None
+
+        if ("매도" in block) or ("sold" in low) or re.search(r"\bsell\b", low):
+            side = "SELL"
+        elif ("매수" in block) or ("bought" in low) or re.search(r"\bbuy\b", low):
+            side = "BUY"
+        else:
+            side = None
+
+        shown = ""
+        mm = money_re.search(block)
+        if mm:
+            shown = ("-" if mm.group(1) == "-" else "+") + "$" + mm.group(2)
+
+        d_iso = now_kst.replace(tzinfo=None).isoformat()
+        if ("어제" in block) or ("yesterday" in low):
+            d_iso = (now_kst - timedelta(days=1)).replace(tzinfo=None).isoformat()
+        else:
+            rm = rel_re.search(block)
+            if rm:
+                n, unit = int(rm.group(1)), rm.group(2).lower()
+                if unit in ("분", "min", "minute", "minutes"):
+                    delta = timedelta(minutes=n)
+                elif unit in ("시간", "시", "hour", "hours"):
+                    delta = timedelta(hours=n)
+                elif unit in ("일", "day", "days"):
+                    delta = timedelta(days=n)
+                elif unit in ("주", "week", "weeks"):
+                    delta = timedelta(weeks=n)
+                else:
+                    delta = timedelta(days=30 * n)
+                d_iso = (now_kst - delta).replace(tzinfo=None).isoformat()
+
+        if price is None or shares is None or shares <= 0 or not outcome or side is None:
+            unparsed.append(title or url)
+            continue
+
+        key = f"{slug}::{outcome}" if slug else f"{title}|{outcome}"
+        rows.append(
+            {
+                "tx_id": f"paste|{slug}|{outcome}|{side}|{price}|{shares}",
+                "d": d_iso,
+                "name": title or slug or "Polymarket trade",
+                "outcome": outcome,
+                "side": side,
+                "price": round(price, 2),
+                "shares": round(shares, 4),
+                "amount": round(shares * price / 100.0, 2),
+                "asset": key,
+                "token_id": key,
+                "src": "paste",
+                "shown_pnl": shown,
+            }
+        )
+
+    buy = sum(1 for r in rows if r["side"] == "BUY")
+    sell = sum(1 for r in rows if r["side"] == "SELL")
+    return rows, {"ok": len(rows), "buy": buy, "sell": sell, "unparsed": unparsed}
+
+
 def parse_trade_datetime(tr):
     """Return a KST datetime from normalized auto_trades or raw-like activity rows."""
     if not isinstance(tr, dict):
@@ -3222,6 +3341,64 @@ with tab4:
                     st.markdown(line(t(f"거래내역 불러오기 실패 (HTTP {e.code})", f"Activity import failed (HTTP {e.code})"), "b"), unsafe_allow_html=True)
                 except Exception as e:
                     st.markdown(line(t(f"거래내역 불러오기 실패 — {e}", f"Activity import failed — {e}"), "b"), unsafe_allow_html=True)
+
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown(f'<div class="eyebrow">{t("텍스트로 거래내역 붙여넣기", "Paste trade history as text")}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="footnote" style="margin:0 0 8px 0;">'
+            f'{t("Polymarket 활동 화면을 그대로 복사해 붙여넣으세요. 매수·매도가 섞여 있어도 시장·선택지별로 평균가와 추정 실현손익을 계산합니다. 화면에 보이는 +$/−$ 숫자는 의미가 확정되지 않아 무시하고, 손익은 가격×수량으로 다시 계산합니다.", "Paste the Polymarket activity screen as-is. Buys and sells can be mixed; we group by market/outcome and estimate average price and realized P&L. The +$/−$ figure shown is ignored (meaning unconfirmed); P&L is recomputed from price × shares.")}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        paste_text = st.text_area(
+            t("거래내역 텍스트", "Trade history text"),
+            value="",
+            height=150,
+            key="paste_activity_text",
+            placeholder="[Will England vs. Croatia end in a draw?](https://polymarket.com/event/.../...-draw)\nYes 30¢\n40.0 주\n+$12.14\n19분 전매수",
+            label_visibility="collapsed",
+        )
+        if st.button(
+            t("붙여넣기 분석 · 거래내역에 추가", "Parse paste · add to trade history"),
+            use_container_width=True,
+            key="paste_activity_btn",
+        ):
+            parsed_rows, pstat = parse_pasted_activity(paste_text)
+            if not parsed_rows and not pstat["unparsed"]:
+                st.markdown(line(t("붙여넣은 내용에서 거래를 찾지 못했습니다.", "No trades found in the pasted text."), "w"), unsafe_allow_html=True)
+            else:
+                st.session_state.auto_trades = [
+                    r for r in st.session_state.get("auto_trades", []) if r.get("src") != "paste"
+                ]
+                st.session_state.auto_trades.extend(parsed_rows)
+                if parsed_rows:
+                    st.markdown(
+                        line(
+                            t(
+                                f"거래 {pstat['ok']}건 인식 · 매수 {pstat['buy']} / 매도 {pstat['sell']} (다시 붙여넣으면 이전 붙여넣기 내역은 교체됩니다)",
+                                f"Parsed {pstat['ok']} trades · buy {pstat['buy']} / sell {pstat['sell']} (re-pasting replaces the previous paste)",
+                            ),
+                            "g",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                if pstat["unparsed"]:
+                    st.markdown(
+                        line(
+                            t(
+                                f"인식 실패 {len(pstat['unparsed'])}건 — 선택지·가격(¢)·수량(주)·매수/매도 표시가 모두 있는지 확인하세요.",
+                                f"{len(pstat['unparsed'])} blocks not parsed — each needs outcome, price(¢), shares, and buy/sell.",
+                            ),
+                            "w",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        '<div class="footnote">' + " · ".join(esc(x) for x in pstat["unparsed"][:8]) + "</div>",
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("<hr>", unsafe_allow_html=True)
 
         if st.session_state.auto_trades:
             sd, ed, date_label = render_trade_date_controls()
