@@ -2142,6 +2142,11 @@ def parse_pasted_activity(text):
         slug = extract_slug(url)
         body = src[m.end(): (links[i + 1].start() if i + 1 < len(links) else len(src))]
         low = body.lower()
+        # Polymarket activity often places the action label (매수/매도/상환/정산/손실/수익)
+        # on the line BEFORE the market link/title. Read side/event cues from the pre-link text
+        # so rows do not shift one trade forward.
+        pre = src[(links[i - 1].end() if i > 0 else 0): m.start()]
+        low_pre = pre.lower()
 
         outcome, price = "", None
         pm = price_re.search(body)
@@ -2161,9 +2166,9 @@ def parse_pasted_activity(text):
             except ValueError:
                 shares = None
 
-        if ("매도" in body) or re.search(r"sold|\bsell\b", low):
+        if ("매도" in pre) or re.search(r"sold|\bsell\b", low_pre):
             side = "SELL"
-        elif ("매수" in body) or re.search(r"bought|\bbuy\b", low):
+        elif ("매수" in pre) or re.search(r"bought|\bbuy\b", low_pre):
             side = "BUY"
         else:
             side = None
@@ -2176,10 +2181,10 @@ def parse_pasted_activity(text):
         is_trade = (price is not None) and (shares is not None) and (shares > 0) and bool(outcome) and (side is not None)
 
         if not is_trade:
-            looks_event = bool(event_kw.search(body)) or bool(loss_kw.search(body)) or bool(win_kw.search(body)) \
+            looks_event = bool(event_kw.search(pre)) or bool(loss_kw.search(pre)) or bool(win_kw.search(pre)) \
                           or (shown != "" and price is None and shares is None and side is None)
             if looks_event:
-                result = t("손실", "Loss") if loss_kw.search(body) else (t("수익", "Profit") if win_kw.search(body) else t("정산", "Settled"))
+                result = t("손실", "Loss") if loss_kw.search(pre) else (t("수익", "Profit") if win_kw.search(pre) else t("정산", "Settled"))
                 events.append({"name": title or slug or "Polymarket", "amount": shown, "result": result})
             else:
                 miss = []
