@@ -680,6 +680,7 @@ DEFAULTS = {
     "reviews": [],
     "review_notes": {},
     "entry_self_strategy": {},
+    "entry_visible_sections": ["선택한 시장", "내 진입 전략 / 자가 판단"],
     "self_check_scale": 5,
 }
 for k, v in DEFAULTS.items():
@@ -3601,45 +3602,84 @@ def _selected_entry_form(entry_category, entry_subcategory):
     keytok = tok if tok else str(sel.get("_sel_key", "selected"))
     disp = float(sel.get("_disp_price", 50.0) or 50.0)
 
-    st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("선택한 시장", "Selected")}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="spec-row"><div class="spec-key">{esc(q)}</div><div class="spec-val"><b>{esc(o)}</b> · {cents(disp)}</div><div></div></div>', unsafe_allow_html=True)
+    # ---- visibility control: market inputs and self-check are separate blocks ----
+    visible_options = ["선택한 시장", "내 진입 전략 / 자가 판단"]
+    if not isinstance(st.session_state.get("entry_visible_sections"), list):
+        st.session_state.entry_visible_sections = list(visible_options)
+    st.multiselect(
+        "표시할 영역 선택",
+        visible_options,
+        key="entry_visible_sections",
+        help="선택한 영역만 아래에 표시됩니다. 둘 다 선택하면 두 영역이 모두 표시됩니다.",
+    )
+    visible_sections = st.session_state.get("entry_visible_sections", visible_options)
+    show_market_block = "선택한 시장" in visible_sections
+    show_strategy_block = "내 진입 전략 / 자가 판단" in visible_sections
 
-    # ---- core deterministic inputs: visible first ----
-    c1, c2 = st.columns(2)
-    with c1:
-        stake = st.number_input(t("투자금($)", "Stake($)"), min_value=1.0, value=float(min(50.0, (effective_bankroll() or 1000.0) * 0.03) or 50.0), key="sel_stake")
-        conf = st.selectbox(t("확신", "Conviction"), confidence_options(), index=2, key="sel_conf")
-        target = st.number_input(t("목표가(¢)", "Target(¢)"), min_value=1.0, max_value=100.0, value=float(min(disp + 10, 99.0)), key="sel_target")
-    with c2:
-        fair = st.number_input(t("적정가(¢)", "Fair(¢)"), min_value=1.0, max_value=99.0, value=float(min(disp + 5, 99.0)), key="sel_fair")
-        purp = st.selectbox(t("목적", "Purpose"), purpose_options(), key="sel_purpose")
-        stop = st.number_input(t("손절가(¢)", "Stop(¢)"), min_value=0.0, max_value=99.0, value=float(max(disp - 10, 1.0)), key="sel_stop")
+    default_stake = float(min(50.0, (effective_bankroll() or 1000.0) * 0.03) or 50.0)
+    default_conf = confidence_options()[2]
+    default_target = float(min(disp + 10, 99.0))
+    default_fair = float(min(disp + 5, 99.0))
+    default_purpose = purpose_options()[0]
+    default_stop = float(max(disp - 10, 1.0))
+
+    # ---- core deterministic inputs: visible only when selected ----
+    if show_market_block:
+        st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("선택한 시장", "Selected")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="spec-row"><div class="spec-key">{esc(q)}</div><div class="spec-val"><b>{esc(o)}</b> · {cents(disp)}</div><div></div></div>', unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            stake = st.number_input(t("투자금($)", "Stake($)"), min_value=1.0, value=default_stake, key="sel_stake")
+            conf = st.selectbox(t("확신", "Conviction"), confidence_options(), index=2, key="sel_conf")
+            target = st.number_input(t("목표가(¢)", "Target(¢)"), min_value=1.0, max_value=100.0, value=default_target, key="sel_target")
+        with c2:
+            fair = st.number_input(t("적정가(¢)", "Fair(¢)"), min_value=1.0, max_value=99.0, value=default_fair, key="sel_fair")
+            purp = st.selectbox(t("목적", "Purpose"), purpose_options(), key="sel_purpose")
+            stop = st.number_input(t("손절가(¢)", "Stop(¢)"), min_value=0.0, max_value=99.0, value=default_stop, key="sel_stop")
+    else:
+        # Keep selected market data internally, but do not render the market/input block.
+        # If the user analyzes from self-check only, use previous widget values or safe defaults.
+        stake = float(st.session_state.get("sel_stake", default_stake) or default_stake)
+        conf = st.session_state.get("sel_conf", default_conf)
+        if conf not in confidence_options():
+            conf = default_conf
+        target = float(st.session_state.get("sel_target", default_target) or default_target)
+        fair = float(st.session_state.get("sel_fair", default_fair) or default_fair)
+        purp = st.session_state.get("sel_purpose", default_purpose)
+        if purp not in purpose_options():
+            purp = default_purpose
+        stop = float(st.session_state.get("sel_stop", default_stop) or default_stop)
 
     # ---- optional self-strategy section ----
-    st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("내 진입 전략 / 자가 판단", "My entry strategy / self-check")}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="footnote">{t("앱이 판단하기 전에 스스로 확인할 항목만 선택하세요. 선택하지 않은 항목은 입력창을 숨깁니다.", "Choose only the self-check items you want before the app verdict.")}</div>', unsafe_allow_html=True)
 
     strategy_options = [
         "리스크", "엣지", "매도 타이밍", "내가 생각한 확률", "시장이 보는 확률",
         "진입 근거", "청산/매도 근거", "포지션 크기", "감정/FOMO",
         "외부배당", "AI 리서치 메모", "배운 점", "실수/규칙 위반", "다음 행동",
     ]
-    default_strategy = ["리스크", "엣지", "매도 타이밍", "내가 생각한 확률", "시장이 보는 확률", "진입 근거"]
-    selected_strategy_fields = st.multiselect(
-        "평가할 항목 선택",
-        strategy_options,
-        default=default_strategy,
-        key=f"entry_strategy_fields_{keytok}",
-        help=t("선택한 항목만 아래에 표시됩니다.", "Only selected fields are shown below."),
-    )
-
     scale = self_check_scale()
-    strategy_payload = {"selected_fields": list(selected_strategy_fields), "rating_scale": scale}
+    selected_strategy_fields = []
+    strategy_payload = {"selected_fields": [], "rating_scale": scale}
     bk = 0.0
     bk_memo = ""
     ai_memo = ""
 
-    if selected_strategy_fields:
+    if show_strategy_block:
+        st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("내 진입 전략 / 자가 판단", "My entry strategy / self-check")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="footnote">{t("앱이 판단하기 전에 스스로 확인할 항목만 선택하세요. 선택하지 않은 항목은 입력창을 숨깁니다.", "Choose only the self-check items you want before the app verdict.")}</div>', unsafe_allow_html=True)
+        strategy_fields_key = f"entry_strategy_fields_{keytok}"
+        if strategy_fields_key not in st.session_state or not isinstance(st.session_state.get(strategy_fields_key), list):
+            st.session_state[strategy_fields_key] = []
+        selected_strategy_fields = st.multiselect(
+            "평가할 항목 선택",
+            strategy_options,
+            key=strategy_fields_key,
+            help=t("선택한 항목만 아래에 표시됩니다.", "Only selected fields are shown below."),
+        )
+        strategy_payload = {"selected_fields": list(selected_strategy_fields), "rating_scale": scale}
+
+    if show_strategy_block and selected_strategy_fields:
 
         if "리스크" in selected_strategy_fields:
             r1, r2 = st.columns([1, 2])
@@ -3773,7 +3813,7 @@ def _selected_entry_form(entry_category, entry_subcategory):
 
     if st.session_state.get("_entry_active") == keytok and st.session_state.get("last_entry"):
         saved_strategy = st.session_state.get("entry_self_strategy", {}).get(keytok, {})
-        if saved_strategy:
+        if show_strategy_block and saved_strategy:
             st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("내 진입 전 판단", "My pre-entry view")}</div>', unsafe_allow_html=True)
             strategy_text = _strategy_context_text(saved_strategy)
             if strategy_text:
