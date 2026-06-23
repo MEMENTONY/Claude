@@ -465,6 +465,7 @@ DEFAULTS = {
     "dev_mode": False,
     "reviews": [],
     "review_notes": {},
+    "entry_self_strategy": {},
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -3357,11 +3358,16 @@ def _market_table(rows, section_key):
 
 
 def _selected_entry_form(entry_category, entry_subcategory):
-    """Selected market detailed inputs. Important fields are visible, not hidden."""
+    """Selected market detailed inputs plus pre-entry self-review fields.
+
+    The deterministic engine still runs calculate_entry only. The added section lets
+    the user define their own strategy/rationale before pressing Analyze.
+    """
     sel = st.session_state.get("_entry_sel")
     if not sel:
         st.markdown(f'<div class="footnote">{t("위에서 시장을 선택하면 입력 폼이 열립니다.", "Select a market above to open inputs.")}</div>', unsafe_allow_html=True)
         return
+
     mk = t("시장", "Market")
     oc = t("선택지", "Outcome")
     q = sel.get(mk, "")
@@ -3369,8 +3375,32 @@ def _selected_entry_form(entry_category, entry_subcategory):
     tok = str(sel.get("token_id", "") or "")
     keytok = tok if tok else str(sel.get("_sel_key", "selected"))
     disp = float(sel.get("_disp_price", 50.0) or 50.0)
+
     st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("선택한 시장", "Selected")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="spec-row"><div class="spec-key">{esc(q)}</div><div class="spec-val"><b>{esc(o)}</b> · {cents(disp)}</div><div></div></div>', unsafe_allow_html=True)
+
+    strategy_options = [
+        "Risk",
+        "Edge",
+        "Selling timing",
+        "My probability",
+        "Market probability",
+        "Entry rationale",
+        "Exit rationale",
+        "Position size",
+        "Emotion / FOMO",
+        "What I learned",
+        "Mistake / rule violation",
+        "Next action",
+    ]
+    default_strategy = ["Risk", "Edge", "Selling timing", "My probability", "Market probability", "Entry rationale"]
+    selected_strategy_fields = st.multiselect(
+        t("진입 전 자가 판단 항목 선택", "Select pre-entry self-review fields"),
+        strategy_options,
+        default=default_strategy,
+        key=f"entry_strategy_fields_{keytok}",
+        help=t("앱 판정 전에 내가 어떤 근거와 전략으로 들어가는지 먼저 정리합니다.", "Define your own logic before the app verdict."),
+    )
 
     with st.form("sel_entry_form"):
         c1, c2, c3, c4 = st.columns(4)
@@ -3382,15 +3412,89 @@ def _selected_entry_form(entry_category, entry_subcategory):
             conf = st.selectbox(t("확신", "Conviction"), confidence_options(), index=2, key="sel_conf")
         with c4:
             purp = st.selectbox(t("목적", "Purpose"), purpose_options(), key="sel_purpose")
+
         c5, c6 = st.columns(2)
         with c5:
             target = st.number_input(t("목표가(¢)", "Target(¢)"), min_value=1.0, max_value=100.0, value=float(min(disp + 10, 99.0)), key="sel_target")
         with c6:
             stop = st.number_input(t("손절가(¢)", "Stop(¢)"), min_value=0.0, max_value=99.0, value=float(max(disp - 10, 1.0)), key="sel_stop")
+
         bk = st.number_input(t("외부배당/북메이커 승률(%)", "Bookmaker prob(%)"), min_value=0.0, max_value=99.0, value=0.0, key="sel_book")
         bk_memo = st.text_input(t("외부배당 출처 메모", "Bookmaker/source memo"), key="sel_bm", placeholder=t("예: Pinnacle T1 -180, Bet365 Gen.G 1.55", "e.g. Pinnacle T1 -180, Bet365 Gen.G 1.55"))
+
+        st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("내 진입 전략 / 자가 판단", "My entry strategy / self-review")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="footnote">{t("아래 항목은 앱이 판단하기 전에 스스로 세우는 전략 기록입니다. 선택한 항목만 입력하세요.", "These fields record your own thinking before the app verdict. Fill only the selected items.")}</div>', unsafe_allow_html=True)
+
+        strategy_payload = {"selected_fields": list(selected_strategy_fields)}
+
+        if "Risk" in selected_strategy_fields:
+            r1, r2 = st.columns([1, 2])
+            with r1:
+                strategy_payload["risk_level"] = st.selectbox(t("Risk 판단", "Risk view"), [t("낮음", "Low"), t("중간", "Medium"), t("높음", "High")], index=1, key=f"entry_risk_level_{keytok}")
+            with r2:
+                strategy_payload["risk_note"] = st.text_input(t("리스크 판단 메모", "Risk notes"), key=f"entry_risk_note_{keytok}", placeholder=t("예: 85¢ 이상 고가 진입, 상환까지 수익 제한", "e.g. high-price entry above 85¢, limited upside to redemption"))
+
+        if "Edge" in selected_strategy_fields:
+            e1, e2 = st.columns([1, 2])
+            with e1:
+                strategy_payload["self_edge_cents"] = st.number_input(t("내가 본 Edge(¢)", "My edge (¢)"), min_value=-99.0, max_value=99.0, value=float(round(min(disp + 5, 99.0) - disp, 1)), step=0.5, key=f"entry_self_edge_{keytok}")
+            with e2:
+                strategy_payload["edge_note"] = st.text_input(t("왜 저평가라고 봤는가?", "Why is this mispriced?"), key=f"entry_edge_note_{keytok}", placeholder=t("시장 가격보다 높게 보는 핵심 근거", "Main reason you think fair value is above market"))
+
+        if "Selling timing" in selected_strategy_fields:
+            s1, s2 = st.columns([1, 1])
+            with s1:
+                strategy_payload["selling_plan"] = st.selectbox(
+                    t("매도 전략", "Selling plan"),
+                    [t("만기 보유", "Hold to expiry"), t("중간 익절", "Mid-trade take-profit"), t("손절", "Stop-loss"), t("상환/정산 대기", "Wait for redemption/settlement"), t("매도 타이밍 미정", "Exit timing undecided")],
+                    key=f"entry_selling_plan_{keytok}",
+                )
+            with s2:
+                strategy_payload["desired_sell_price"] = st.number_input(t("원하는 매도가(¢)", "Desired sell price (¢)"), min_value=0.0, max_value=100.0, value=float(min(disp + 10, 99.0)), step=0.5, key=f"entry_desired_sell_{keytok}")
+            strategy_payload["selling_note"] = st.text_input(t("매도 타이밍 메모", "Selling timing notes"), key=f"entry_selling_note_{keytok}", placeholder=t("예: 92¢ 도달 시 절반 익절, 80¢ 이탈 시 재평가", "e.g. sell half at 92¢, re-check below 80¢"))
+
+        if "My probability" in selected_strategy_fields or "Market probability" in selected_strategy_fields:
+            pcols = st.columns(2)
+            if "My probability" in selected_strategy_fields:
+                with pcols[0]:
+                    strategy_payload["my_probability"] = st.number_input(t("내가 생각한 실제 확률(%)", "My estimated probability (%)"), min_value=0.0, max_value=100.0, value=float(min(disp + 5, 99.0)), step=0.5, key=f"entry_my_prob_{keytok}")
+            if "Market probability" in selected_strategy_fields:
+                with pcols[1]:
+                    strategy_payload["market_probability"] = st.number_input(t("시장이 반영한 확률(%)", "Market implied probability (%)"), min_value=0.0, max_value=100.0, value=float(disp), step=0.5, key=f"entry_market_prob_{keytok}")
+
+        if "Entry rationale" in selected_strategy_fields:
+            strategy_payload["entry_rationale"] = st.text_area(t("진입 근거", "Entry rationale"), key=f"entry_rationale_{keytok}", height=72, placeholder=t("내가 이 포지션에 들어가려는 핵심 근거", "Why I want to enter this position"))
+
+        if "Exit rationale" in selected_strategy_fields:
+            strategy_payload["exit_rationale"] = st.text_area(t("청산/매도 근거", "Exit rationale"), key=f"entry_exit_rationale_{keytok}", height=68, placeholder=t("어떤 조건이면 팔거나 보유할지", "What would make me sell or hold"))
+
+        if "Position size" in selected_strategy_fields:
+            strategy_payload["position_size_note"] = st.text_input(t("포지션 크기 판단", "Position size rationale"), key=f"entry_pos_size_note_{keytok}", placeholder=t("$30로 제한하는 이유, 추가진입 금지 조건 등", "Why this stake size, no-add rules, etc."))
+
+        if "Emotion / FOMO" in selected_strategy_fields:
+            emo1, emo2 = st.columns([1, 2])
+            with emo1:
+                strategy_payload["emotion_state"] = st.selectbox(t("감정 상태", "Emotion state"), [t("정상", "Normal"), t("약간 감정적", "Slightly emotional"), "FOMO", t("복구 배팅", "Recovery betting"), t("규칙 위반 위험", "Rule violation risk")], key=f"entry_emotion_state_{keytok}")
+            with emo2:
+                strategy_payload["emotion_note"] = st.text_input(t("감정 메모", "Emotion note"), key=f"entry_emotion_note_{keytok}", placeholder=t("왜 지금 들어가고 싶은지, 충동 여부", "Why I want to enter now; impulse check"))
+
+        if "What I learned" in selected_strategy_fields:
+            strategy_payload["lesson_note"] = st.text_area(t("이번 진입에서 배울 점", "What I want to learn"), key=f"entry_lesson_{keytok}", height=60)
+
+        if "Mistake / rule violation" in selected_strategy_fields:
+            strategy_payload["mistake_note"] = st.text_area(t("예상되는 실수 / 규칙 위반", "Possible mistake / rule violation"), key=f"entry_mistake_{keytok}", height=60)
+
+        if "Next action" in selected_strategy_fields:
+            strategy_payload["next_action"] = st.selectbox(
+                t("다음 행동 계획", "Next action plan"),
+                [t("조건 충족 시 진입", "Enter if conditions hold"), t("가격 개선 시 진입", "Enter only at better price"), t("정보 확인 후 진입", "Verify info first"), t("진입하지 않음", "Do not enter"), t("금액 축소", "Reduce stake")],
+                key=f"entry_next_action_{keytok}",
+            )
+            strategy_payload["next_action_note"] = st.text_input(t("다음 행동 메모", "Next action note"), key=f"entry_next_note_{keytok}")
+
         ai_memo = st.text_area(t("AI 리서치 메모 / 외부정보", "AI research memo / external info"), key="sel_ai_memo", height=84,
                                placeholder=t("최근 10경기·상대전적·순위·라인업·부상·뉴스 링크 붙여넣기", "recent 10, h2h, standings, lineup, injuries, news links"))
+
         with st.expander(t("고급 (감정·중복노출)", "Advanced (emotion · duplicate exposure)")):
             a1, a2 = st.columns(2)
             with a1:
@@ -3400,19 +3504,61 @@ def _selected_entry_form(entry_category, entry_subcategory):
                 dup_ml = st.number_input(t("중복 Moneyline 노출($)", "Duplicate ML exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_ml")
                 dup_game = st.number_input(t("중복 Game/Map 노출($)", "Duplicate game/map exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_game")
                 dup_side = st.number_input(t("같은 방향 총 노출($)", "Same-side exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_side")
+
         go = st.form_submit_button(t("분석", "Analyze"), use_container_width=True)
 
+    def _strategy_context_text(payload):
+        if not isinstance(payload, dict) or not payload.get("selected_fields"):
+            return ""
+        lines = [t("[진입 전 자가 판단]", "[Pre-entry self-review]")]
+        mapping = {
+            "risk_level": t("Risk", "Risk"),
+            "risk_note": t("Risk 메모", "Risk note"),
+            "self_edge_cents": "Edge(¢)",
+            "edge_note": t("Edge 근거", "Edge rationale"),
+            "selling_plan": t("매도 전략", "Selling plan"),
+            "desired_sell_price": t("원하는 매도가", "Desired sell price"),
+            "selling_note": t("매도 메모", "Selling note"),
+            "my_probability": t("내 확률", "My probability"),
+            "market_probability": t("시장 확률", "Market probability"),
+            "entry_rationale": t("진입 근거", "Entry rationale"),
+            "exit_rationale": t("청산 근거", "Exit rationale"),
+            "position_size_note": t("포지션 크기", "Position size"),
+            "emotion_state": t("감정 상태", "Emotion state"),
+            "emotion_note": t("감정 메모", "Emotion note"),
+            "lesson_note": t("배울 점", "Lesson"),
+            "mistake_note": t("실수/규칙 위반", "Mistake/rule violation"),
+            "next_action": t("다음 행동", "Next action"),
+            "next_action_note": t("다음 행동 메모", "Next action note"),
+        }
+        for k, label in mapping.items():
+            v = payload.get(k)
+            if v not in (None, ""):
+                if isinstance(v, float):
+                    v = round(v, 2)
+                lines.append(f"- {label}: {v}")
+        return "\n".join(lines)
+
     if go:
+        st.session_state.entry_self_strategy[keytok] = dict(strategy_payload)
         analyze_entry_row(sel, stake, fair, conf, purp, category=entry_category, subcategory=entry_subcategory, ai_context=ai_memo,
                           adv={"target_price": target, "stop_price": stop, "bookmaker_prob": bk,
                                "bookmaker_source_memo": bk_memo, "ai_extra_context": ai_memo,
                                "previous_good_price": prev_good, "duplicate_ml": dup_ml,
                                "duplicate_game": dup_game, "duplicate_side": dup_side,
-                               "fomo_count": fomo, "market_type": "Match Moneyline"})
+                               "fomo_count": fomo, "market_type": "Match Moneyline",
+                               "self_strategy": dict(strategy_payload)})
         st.session_state._entry_active = keytok
         st.rerun()
 
     if st.session_state.get("_entry_active") == keytok and st.session_state.get("last_entry"):
+        saved_strategy = st.session_state.get("entry_self_strategy", {}).get(keytok, {})
+        if saved_strategy:
+            st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("내 진입 전 판단", "My pre-entry view")}</div>', unsafe_allow_html=True)
+            strategy_text = _strategy_context_text(saved_strategy)
+            if strategy_text:
+                st.markdown(f'<div class="rc-card"><div class="rc-h">{t("자가 전략 요약", "Self-strategy summary")}</div><div class="rc-note">{esc(strategy_text).replace(chr(10), "<br>")}</div></div>', unsafe_allow_html=True)
+
         render_entry_result(st.session_state.last_entry)
         if st.session_state.get("watching_market", {}).get("token_id"):
             st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("실시간 가격 추적", "Live price watch")}</div>', unsafe_allow_html=True)
@@ -3421,6 +3567,9 @@ def _selected_entry_form(entry_category, entry_subcategory):
             r = st.session_state.last_entry
             memo_for_ai = str(st.session_state.get("sel_ai_memo", "") or "")
             bk_for_ai = str(st.session_state.get("sel_bm", "") or "")
+            strategy_for_ai = _strategy_context_text(st.session_state.get("entry_self_strategy", {}).get(keytok, {}))
+            if strategy_for_ai:
+                memo_for_ai = (memo_for_ai + "\n\n" + strategy_for_ai).strip()
             st.session_state.ai_pending = {
                 "market": sel.get(mk, ""),
                 "outcome": sel.get(oc, ""),
@@ -3434,6 +3583,7 @@ def _selected_entry_form(entry_category, entry_subcategory):
                 "bookmaker_prob": float(st.session_state.get("sel_book", 0.0) or 0.0),
                 "bookmaker_memo": bk_for_ai,
                 "ai_memo": memo_for_ai,
+                "self_strategy": st.session_state.get("entry_self_strategy", {}).get(keytok, {}),
                 "resolution": str(sel.get("resolution", "") or ""),
                 "end_date": str(sel.get("endDate", "") or ""),
                 "source_url": st.session_state.get("entry_url", ""),
