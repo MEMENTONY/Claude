@@ -411,7 +411,6 @@ DEFAULTS = {
     "lang": "ko",
     "profile": dict(DEFAULT_PROFILE),  # default risk profile; no onboarding gate
     "last_entry": None,
-    "last_position": None,
     "trade_log": [],
     "portfolio": [],
     "cash": 0.0,
@@ -438,6 +437,11 @@ DEFAULTS = {
     "auto_trades": [],
     "wallet_addr": "",
     "imported_tx_ids": [],
+    "paste_trades": [],
+    "paste_events": [],
+    "paste_unparsed": [],
+    "paste_meta": {"ok": 0, "buy": 0, "sell": 0, "events": [], "unparsed": []},
+    "journal_mode": "wallet",
     "trade_qf": "all",
     "trade_qf_select": "all",
     "trade_start_date": None,
@@ -762,58 +766,8 @@ def calculate_entry(d):
 
 
 # =====================================================
-# Position engine
+# Partial sell engine
 # =====================================================
-def evaluate_position(d):
-    cp, shares, inv, bankroll = d["current_price"], d["shares"], d["investment"], d["bankroll"]
-    current_value = shares * (cp / 100)
-    pnl = current_value - inv
-    roi = pnl / inv * 100 if inv else 0
-    position_pct = current_value / bankroll * 100 if bankroll else 0
-    g, c1, c2, blk = size_thresholds()
-
-    reasons, warnings = [], []
-    if cp >= d["target_price"]:
-        decision, level = t("목표가 도달 — 매도·부분매도 고려", "Target hit — consider selling"), "warn"
-        reasons.append(t("목표가에 도달했습니다. 일부 익절을 검토할 구간입니다.", "Target reached. Consider partial profit."))
-    elif cp <= d["stop_price"] and current_value >= inv * 0.3:
-        decision, level = t("손절 고려", "Consider stop-loss"), "bad"
-        reasons.append(t("손절가 이하이고 회수 가능한 금액이 남아 있습니다.", "Below stop; meaningful value recoverable."))
-    elif current_value <= inv * 0.1:
-        decision, level = t("손절 효용 낮음 — 추가매수 금지", "Stop has little value — no adding"), "warn"
-        reasons.append(t("평가금이 원금의 10% 이하입니다. 옵션처럼 보유, 추가매수 금지.", "Under 10% of cost. Hold like an option; never add."))
-    else:
-        decision, level = t("홀딩 가능", "Holding is fine"), "good"
-        reasons.append(t("목표가와 손절가 사이로 홀딩 조건을 충족합니다.", "Between target and stop; hold conditions met."))
-
-    if roi >= 30:
-        warnings.append(t("수익률 +30% 이상 — 원금 회수 또는 부분매도 검토.", "ROI +30%+ — consider recovering principal."))
-        if level == "good":
-            decision, level = t("홀딩 가능, 단 부분매도 검토", "Hold, but consider partial sell"), "warn"
-    if position_pct >= blk:
-        warnings.append(t(f"포트폴리오 비중이 내 진입 금지선({blk:.0f}%)을 넘었습니다 — 즉시 축소 고려.", f"Over your no-entry line ({blk:.0f}%) — reduce now."))
-        decision, level = t("과대 노출 — 즉시 축소 고려", "Excessive exposure — reduce now"), "bad"
-    elif position_pct >= c1:
-        warnings.append(t(f"포트폴리오 비중이 적정선({g:.0f}%)을 크게 넘었습니다 — 일부 축소 권장.", f"Well above your comfort ratio ({g:.0f}%) — partial reduction advised."))
-        if level != "bad":
-            decision, level = t("홀딩 가능, 단 포지션 크기 과대", "Hold, but size too large"), "warn"
-    if d["fomo_count"] >= 3:
-        warnings.append(t("감정 체크 3개 이상 — 추가매수 금지, 축소 우선.", "3+ emotion checks — no adding; reduce first."))
-        decision, level = t("감정 리스크 — 추가매수 금지", "Emotional risk — no adding"), "bad"
-    elif d["fomo_count"] >= 1:
-        warnings.append(t("감정 체크 있음 — 섣부른 추가매수 주의.", "Emotion present — avoid impulsive adds."))
-
-    zl, zk, _, zn = price_zone(cp)
-    if cp >= 80:
-        warnings.append(zn)
-    if not warnings:
-        warnings.append(t("큰 위험 신호는 없지만 목표가·손절가 기준은 유지하세요.", "No major risk, but keep target/stop rules."))
-
-    return {**d, "decision": decision, "level": level, "current_value": current_value,
-            "pnl": pnl, "roi": roi, "position_pct": position_pct,
-            "additional": shares - current_value, "reasons": reasons, "warnings": warnings}
-
-
 def partial_rows(shares, price_cent, investment):
     pdec = price_cent / 100
     rows, need = [], None
@@ -2108,130 +2062,203 @@ def _norm_price_cent(p):
 
 
 def parse_pasted_activity(text):
-    """Parse copied Polymarket activity text into auto_trades-shaped trade rows.
-    A block (split on [Title](URL)) becomes a TRADE only with outcome + price(¢)
-    + shares(주) + side(매수/매도/Buy/Sell). Resolution/redemption & other
-    non-trade rows (no price/shares/side, or containing 상환/정산/redeem/손실/수익/
-    won/lost) go to 'events' and are NOT counted in P&L — their meaning isn't
-    reconstructable from the row. Partial rows go to 'unparsed' with the missing
-    field named. The +$/−$ figure is display-only.
+    """Parse plain copied Polymarket Activity text into normalized trade rows.
+
+    Supports current mobile/web clipboard shapes where the action label can appear
+    before the "icon for ..." line. BUY/SELL rows become auto_trades-shaped rows.
+    Settlement/loss/profit/redemption rows become recognized events and are never
+    counted in estimated P&L.
     """
     rows, events, unparsed = [], [], []
-    src = str(text or "")
+    src = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not src.strip():
         return rows, {"ok": 0, "buy": 0, "sell": 0, "events": events, "unparsed": unparsed}
 
-    link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
-    links = list(link_re.finditer(src))
-    if not links:
-        return rows, {"ok": 0, "buy": 0, "sell": 0, "events": events,
-                      "unparsed": [(t("형식 오류", "Format"), t("[제목](주소) 형식 링크를 찾지 못했습니다.", "No [title](url) links found."))]}
+    label_map = {
+        "매수": "BUY", "buy": "BUY", "bought": "BUY",
+        "매도": "SELL", "sell": "SELL", "sold": "SELL",
+        "상환": "EVENT", "정산": "EVENT", "손실": "EVENT", "수익": "EVENT",
+        "redeem": "EVENT", "redeemed": "EVENT", "redemption": "EVENT",
+        "settle": "EVENT", "settled": "EVENT", "loss": "EVENT", "lost": "EVENT",
+        "profit": "EVENT", "won": "EVENT", "win": "EVENT",
+    }
+    event_label_ko = {
+        "상환": t("상환", "Redeemed"), "정산": t("정산", "Settled"),
+        "손실": t("손실", "Loss"), "수익": t("수익", "Profit"),
+        "redeem": t("상환", "Redeemed"), "redeemed": t("상환", "Redeemed"),
+        "redemption": t("상환", "Redeemed"), "settle": t("정산", "Settled"),
+        "settled": t("정산", "Settled"), "loss": t("손실", "Loss"),
+        "lost": t("손실", "Loss"), "profit": t("수익", "Profit"),
+        "won": t("수익", "Profit"), "win": t("수익", "Profit"),
+    }
+
+    def _clean_line(s):
+        return str(s or "").strip()
+
+    raw_lines = [_clean_line(x) for x in src.split("\n")]
+    lines = [ln for ln in raw_lines if ln]
+
+    def _label_of(line):
+        key = _clean_line(line).lower()
+        return label_map.get(key)
+
+    blocks, current = [], None
+    for ln in lines:
+        act = _label_of(ln)
+        if act:
+            if current:
+                blocks.append(current)
+            current = {"label_raw": ln, "action": act, "lines": []}
+            continue
+        if current is None:
+            current = {"label_raw": "", "action": None, "lines": []}
+        current["lines"].append(ln)
+    if current:
+        blocks.append(current)
+
+    if not any(any(x.lower().startswith("icon for ") for x in b.get("lines", [])) for b in blocks):
+        link_re = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+        links = list(link_re.finditer(src))
+        if links:
+            blocks = []
+            for i, m in enumerate(links):
+                pre = src[(links[i - 1].end() if i > 0 else 0):m.start()]
+                pre_lines = [x.strip() for x in pre.splitlines() if x.strip()]
+                label_raw = pre_lines[-1] if pre_lines and _label_of(pre_lines[-1]) else ""
+                body = src[m.end():(links[i + 1].start() if i + 1 < len(links) else len(src))]
+                body_lines = [x.strip() for x in body.splitlines() if x.strip()]
+                if not label_raw and body_lines and _label_of(body_lines[-1]):
+                    label_raw = body_lines[-1]
+                    body_lines = body_lines[:-1]
+                blocks.append({"label_raw": label_raw, "action": _label_of(label_raw), "lines": [f"icon for {m.group(1).strip()}"] + body_lines})
 
     now_kst = datetime.now(KST)
-    price_re = re.compile(r"([^\n]*?)(\d+(?:\.\d+)?)\s*(?:¢|cents?|c)(?![a-zA-Z])")
-    shares_re = re.compile(r"(\d+(?:\.\d+)?)\s*(?:주|shares?)\b", re.IGNORECASE)
-    money_re = re.compile(r"([+\-]?)\s*\$\s*([\d,]+(?:\.\d+)?)")
-    rel_re = re.compile(r"(\d+)\s*(분|시간|시|일|주|개월|달|min|minute|minutes|hour|hours|day|days|week|weeks|month|months)", re.IGNORECASE)
-    event_kw = re.compile(r"상환|정산|받기|클레임|redeem|redemption|claim|payout|resolv|settle", re.IGNORECASE)
-    loss_kw = re.compile(r"손실|lost|loss", re.IGNORECASE)
-    win_kw = re.compile(r"수익|won\b|win\b|profit|이김", re.IGNORECASE)
+    price_re = re.compile(r"^\s*(.+?)\s+([\d,]+(?:\.\d+)?)\s*(?:¢|cents?|c)\s*$", re.IGNORECASE)
+    shares_re = re.compile(r"([\d,]+(?:\.\d+)?)\s*(?:주|shares?)\b", re.IGNORECASE)
+    amount_re = re.compile(r"^([+\-]?)\$\s*([\d,]+(?:\.\d+)?)\s*$")
+    rel_re = re.compile(r"(?:약\s*)?(\d+)\s*(분|시간|시|일|주|개월|달|min|minute|minutes|hour|hours|day|days|week|weeks|month|months)\s*(?:전|ago)?", re.IGNORECASE)
 
-    for i, m in enumerate(links):
-        title = m.group(1).strip()
-        url = m.group(2).strip()
-        slug = extract_slug(url)
-        body = src[m.end(): (links[i + 1].start() if i + 1 < len(links) else len(src))]
-        low = body.lower()
+    def _num(s, default=None):
+        try:
+            return float(str(s).replace(",", ""))
+        except Exception:
+            return default
+
+    def _dt_from_blob(blob):
+        low = blob.lower()
+        if "어제" in blob or "yesterday" in low:
+            return (now_kst - timedelta(days=1)).replace(tzinfo=None).isoformat()
+        rm = rel_re.search(blob)
+        if rm:
+            n, unit = int(rm.group(1)), rm.group(2).lower()
+            if unit in ("분", "min", "minute", "minutes"):
+                delta = timedelta(minutes=n)
+            elif unit in ("시간", "시", "hour", "hours"):
+                delta = timedelta(hours=n)
+            elif unit in ("일", "day", "days"):
+                delta = timedelta(days=n)
+            elif unit in ("주", "week", "weeks"):
+                delta = timedelta(weeks=n)
+            else:
+                delta = timedelta(days=30 * n)
+            return (now_kst - delta).replace(tzinfo=None).isoformat()
+        return now_kst.replace(tzinfo=None).isoformat()
+
+    for idx, b in enumerate(blocks):
+        blines = list(b.get("lines", []))
+        label_raw = str(b.get("label_raw") or "").strip()
+        action = b.get("action") or _label_of(label_raw)
+        blob = "\n".join([label_raw] + blines)
+        low = blob.lower()
+
+        if action is None:
+            if re.search(r"\b(sold|sell)\b|매도", low):
+                action = "SELL"
+            elif re.search(r"\b(bought|buy)\b|매수", low):
+                action = "BUY"
+            elif re.search(r"상환|정산|손실|수익|redeem|settle|loss|lost|profit|won", low):
+                action = "EVENT"
+
+        title = ""
+        content_lines = []
+        for ln in blines:
+            if ln.lower().startswith("icon for "):
+                title = ln[9:].strip()
+            else:
+                content_lines.append(ln)
+        if not title and content_lines:
+            title = content_lines[0].strip()
 
         outcome, price = "", None
-        pm = price_re.search(body)
-        if pm:
-            outcome = re.sub(r"[·•|,\-–—:\s]+$", "", pm.group(1))
-            outcome = re.sub(r"^[·•|,\-–—:\s]+", "", outcome).strip()
-            try:
-                price = float(pm.group(2))
-            except ValueError:
-                price = None
+        for ln in content_lines:
+            pm = price_re.match(ln)
+            if pm:
+                outcome = pm.group(1).strip()
+                price = _num(pm.group(2))
+                break
 
         shares = None
-        sm = shares_re.search(body)
+        sm = shares_re.search(blob)
         if sm:
-            try:
-                shares = float(sm.group(1))
-            except ValueError:
-                shares = None
-
-        if ("매도" in body) or re.search(r"sold|\bsell\b", low):
-            side = "SELL"
-        elif ("매수" in body) or re.search(r"bought|\bbuy\b", low):
-            side = "BUY"
-        else:
-            side = None
+            shares = _num(sm.group(1))
 
         shown = ""
-        mm = money_re.search(body)
-        if mm:
-            shown = ("-" if mm.group(1) == "-" else "+") + "$" + mm.group(2)
+        if re.search(r"^\s*-\s*$", blob, re.MULTILINE):
+            shown = "-"
+        else:
+            for ln in content_lines + [label_raw]:
+                am = amount_re.match(ln.strip())
+                if am:
+                    shown = f"{am.group(1)}${am.group(2)}"
+                    break
 
-        is_trade = (price is not None) and (shares is not None) and (shares > 0) and bool(outcome) and (side is not None)
-
-        if not is_trade:
-            looks_event = bool(event_kw.search(body)) or bool(loss_kw.search(body)) or bool(win_kw.search(body)) \
-                          or (shown != "" and price is None and shares is None and side is None)
-            if looks_event:
-                result = t("손실", "Loss") if loss_kw.search(body) else (t("수익", "Profit") if win_kw.search(body) else t("정산", "Settled"))
-                events.append({"name": title or slug or "Polymarket", "amount": shown, "result": result})
-            else:
-                miss = []
-                if not outcome and price is None:
-                    miss.append(t("선택지·가격", "outcome/price"))
-                elif price is None:
-                    miss.append(t("가격(¢)", "price(¢)"))
-                elif not outcome:
-                    miss.append(t("선택지", "outcome"))
-                if shares is None or shares <= 0:
-                    miss.append(t("수량(주)", "shares(주)"))
-                if side is None:
-                    miss.append(t("매수/매도", "buy/sell"))
-                reason = (t("없음: ", "missing: ") + ", ".join(miss)) if miss else t("거래 정보 없음", "no trade fields")
-                unparsed.append((title or url, reason))
+        d_iso = _dt_from_blob(blob)
+        if action == "EVENT":
+            raw_key = label_raw.lower()
+            result = event_label_ko.get(raw_key, t("정산", "Settled"))
+            events.append({
+                "name": title or t("알 수 없는 시장", "Unknown market"),
+                "outcome": outcome,
+                "price": round(price, 2) if price is not None else None,
+                "shares": round(shares, 4) if shares is not None else None,
+                "amount": shown,
+                "result": result,
+                "d": d_iso,
+            })
             continue
 
-        key = f"{slug}::{outcome}" if slug else f"{title}|{outcome}"
-        d_iso = now_kst.replace(tzinfo=None).isoformat()
-        if ("어제" in body) or ("yesterday" in low):
-            d_iso = (now_kst - timedelta(days=1)).replace(tzinfo=None).isoformat()
-        else:
-            rm = rel_re.search(body)
-            if rm:
-                n, unit = int(rm.group(1)), rm.group(2).lower()
-                if unit in ("분", "min", "minute", "minutes"):
-                    delta = timedelta(minutes=n)
-                elif unit in ("시간", "시", "hour", "hours"):
-                    delta = timedelta(hours=n)
-                elif unit in ("일", "day", "days"):
-                    delta = timedelta(days=n)
-                elif unit in ("주", "week", "weeks"):
-                    delta = timedelta(weeks=n)
-                else:
-                    delta = timedelta(days=30 * n)
-                d_iso = (now_kst - delta).replace(tzinfo=None).isoformat()
+        is_trade = (action in ("BUY", "SELL")) and (price is not None) and (shares is not None) and shares > 0 and bool(outcome)
+        if not is_trade:
+            missing = []
+            if not title:
+                missing.append(t("시장", "market"))
+            if action not in ("BUY", "SELL"):
+                missing.append(t("매수/매도", "buy/sell"))
+            if not outcome or price is None:
+                missing.append(t("선택지·가격", "outcome/price"))
+            if shares is None or shares <= 0:
+                missing.append(t("수량", "shares"))
+            unparsed.append((title or t("알 수 없는 행", "Unknown row"), t("확인 필요: ", "verify: ") + ", ".join(missing)))
+            continue
 
+        key = f"{title}|{outcome}"
         rows.append({
-            "tx_id": f"paste|{slug}|{outcome}|{side}|{price}|{shares}",
+            "tx_id": f"paste|{idx}|{title}|{outcome}|{action}|{price}|{shares}|{d_iso}",
             "d": d_iso,
-            "name": title or slug or "Polymarket trade",
+            "name": title or "Polymarket trade",
             "outcome": outcome,
-            "side": side,
+            "side": action,
             "price": round(price, 2),
             "shares": round(shares, 4),
-            "amount": round(shares * price / 100.0, 2),  # cost basis, NOT the shown +/-$
+            "amount": round(shares * price / 100.0, 2),
             "asset": key,
             "token_id": key,
             "src": "paste",
             "shown_pnl": shown,
         })
 
+    rows = sort_trades_newest_first(rows) if "sort_trades_newest_first" in globals() else rows
+    events = sorted(events, key=lambda x: parse_trade_datetime(x) or datetime.min.replace(tzinfo=KST), reverse=True) if "parse_trade_datetime" in globals() else events
     buy = sum(1 for r in rows if r["side"] == "BUY")
     sell = sum(1 for r in rows if r["side"] == "SELL")
     return rows, {"ok": len(rows), "buy": buy, "sell": sell, "events": events, "unparsed": unparsed}
@@ -2263,13 +2290,27 @@ def parse_trade_datetime(tr):
         return None
 
 
+def sort_trades_newest_first(trades):
+    """Newest first; rows with unknown datetime go last."""
+    def _key(tr):
+        dt = parse_trade_datetime(tr)
+        if dt is None:
+            return (1, 0.0)
+        return (0, -dt.timestamp())
+    return sorted(list(trades or []), key=_key)
+
+
 def filter_trades_by_date(auto_trades, start_date, end_date):
-    """Filter imported activity by KST date range. Missing dates are excluded and counted."""
+    """Filter imported activity by KST date range and return newest first."""
     keep, unknown = [], 0
+    has_range = bool(start_date or end_date)
     for tr in auto_trades or []:
         dt = parse_trade_datetime(tr)
         if dt is None:
-            unknown += 1
+            if has_range:
+                unknown += 1
+                continue
+            keep.append(tr)
             continue
         d0 = dt.date()
         if start_date and d0 < start_date:
@@ -2277,7 +2318,7 @@ def filter_trades_by_date(auto_trades, start_date, end_date):
         if end_date and d0 > end_date:
             continue
         keep.append(tr)
-    return keep, unknown
+    return sort_trades_newest_first(keep), unknown
 
 
 QF_DEF = [("today", "오늘", "Today"), ("yday", "어제", "Yesterday"),
@@ -2367,9 +2408,9 @@ def render_trade_date_controls():
     return start_date, end_date, f"{start_date.isoformat()} ~ {end_date.isoformat()}"
 
 def group_auto_trades_for_pnl(auto_trades):
-    """Group fill-level auto trades by market/outcome/token and estimate weighted average P&L."""
+    """Group fill-level trades by market/outcome/token and estimate weighted average P&L."""
     groups = {}
-    for tr in auto_trades or []:
+    for tr in sort_trades_newest_first(auto_trades or []):
         if not isinstance(tr, dict):
             continue
         title = tr.get("title") or tr.get("market") or tr.get("name") or tr.get("slug") or "Unknown"
@@ -2387,8 +2428,12 @@ def group_auto_trades_for_pnl(auto_trades):
             "market": title, "outcome": outcome, "token_id": tok,
             "bought_shares": 0.0, "sold_shares": 0.0,
             "buy_cost": 0.0, "sell_proceeds": 0.0, "fills": 0,
+            "latest_dt": None,
         })
         g["fills"] += 1
+        dt = parse_trade_datetime(tr)
+        if dt is not None and (g["latest_dt"] is None or dt > g["latest_dt"]):
+            g["latest_dt"] = dt
         if side.startswith("B"):
             g["bought_shares"] += size
             g["buy_cost"] += cash
@@ -2413,6 +2458,7 @@ def group_auto_trades_for_pnl(auto_trades):
             status = t("보유 중", "Open")
         else:
             status = t("청산 완료", "Closed")
+        latest_dt = g.get("latest_dt")
         rows.append({
             "key": key, "market": g["market"], "outcome": g["outcome"], "token_id": g["token_id"],
             "avg_buy_price": round(avg_buy * 100, 2) if avg_buy <= 1 and avg_buy > 0 else round(avg_buy, 2),
@@ -2422,8 +2468,10 @@ def group_auto_trades_for_pnl(auto_trades):
             "realized_pnl": None if oversold else round(realized, 2),
             "remaining_shares": round(remaining, 2), "remaining_cost": round(remaining_cost, 2),
             "status": status, "fills": g["fills"],
+            "latest_dt": latest_dt.isoformat(timespec="minutes") if latest_dt else "",
+            "_latest_ts": latest_dt.timestamp() if latest_dt else -1,
         })
-    return sorted(rows, key=lambda r: (r["remaining_shares"] > 0, abs(r["realized_pnl"] or 0), r["buy_cost"]), reverse=True)
+    return sorted(rows, key=lambda r: (r.get("_latest_ts", -1), abs(r.get("realized_pnl") or 0), r.get("buy_cost", 0)), reverse=True)
 
 
 def summarize_selected_trade_groups(rows, selected_keys):
@@ -2438,33 +2486,16 @@ def summarize_selected_trade_groups(rows, selected_keys):
             "remaining_shares": remaining, "remaining_cost": remaining_cost, "unverified": any_unverified}
 
 
-def render_trade_pnl_summary(auto_trades, date_label=""):
+def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=""):
     rows = group_auto_trades_for_pnl(auto_trades)
     if not rows:
-        st.markdown(f'<div class="footnote">{t("해당 기간 자동 거래내역이 없습니다.", "No auto-trades in this range.")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="footnote">{t("해당 기간 거래내역이 없습니다.", "No trades in this range.")}</div>', unsafe_allow_html=True)
         return
-    sel_col = t("선택", "Sel")
-    df = pd.DataFrame([{
-        sel_col: False,
-        t("시장", "Market"): r["market"],
-        t("선택지", "Outcome"): r["outcome"],
-        t("평균 매수", "Avg buy"): cents(r["avg_buy_price"]),
-        t("평균 매도", "Avg sell"): cents(r["avg_sell_price"]) if r["sold_shares"] > 0 else "—",
-        t("매수 수량", "Bought"): r["bought_shares"],
-        t("매도 수량", "Sold"): r["sold_shares"],
-        t("매수금", "Buy cost"): money(r["buy_cost"]),
-        t("매도금", "Proceeds"): money(r["sell_proceeds"]),
-        t("실현손익", "Realized"): t("확인 필요", "Verify") if r["realized_pnl"] is None else signed_money(r["realized_pnl"]),
-        t("잔여 수량", "Remaining"): r["remaining_shares"],
-        t("상태", "Status"): r["status"],
-    } for r in rows])
-    disabled_cols = [c for c in df.columns if c != sel_col]
-    edited = st.data_editor(df, hide_index=True, use_container_width=True, key="pnl_editor", disabled=disabled_cols)
-    selected_keys = [rows[i]["key"] for i, v in enumerate(edited[sel_col].tolist()) if v]
-    s0 = summarize_selected_trade_groups(rows, selected_keys)
-    label = t("선택 합계", "Selected total") if selected_keys else t("전체 합계", "All total")
+
+    s0 = summarize_selected_trade_groups(rows, [])
     range_label = f" · {date_label}" if date_label else ""
-    st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("거래내역 기준 추정손익", "Estimated P&L from trade history")} · {label}{range_label}</div>', unsafe_allow_html=True)
+    header_text = title or t("거래내역 기준 추정손익", "Estimated P&L from trade history")
+    st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{header_text}{range_label}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="stats">'
         + stat(t("총 매수금", "Buy cost"), money(s0["buy_cost"]), "")
@@ -2475,13 +2506,60 @@ def render_trade_pnl_summary(auto_trades, date_label=""):
     if s0["unverified"]:
         st.markdown(line(t("일부 항목은 매도 수량이 매수보다 많아 손익이 부정확할 수 있습니다.", "Some rows have sold>bought; P&L may be off."), "w"), unsafe_allow_html=True)
     st.markdown(f'<div class="footnote">{t("추정치입니다. 공식 포트폴리오 손익과 별개이며 아직 합산하지 않습니다.", "Estimate only. Separate from official portfolio P&L; not merged yet.")}</div>', unsafe_allow_html=True)
-    with st.expander(t("원본 체결(fill) 보기", "Raw fills")):
-        st.markdown(f'<div class="footnote" style="margin:0 0 8px 0;">{t("체결 수는 성과 지표가 아닙니다. 지정가 주문은 여러 fill로 쪼개질 수 있습니다.", "Fill count is not a performance metric. Limit orders may split.")}</div>', unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame([{
-            t("시장", "Market"): r["market"], t("선택지", "Outcome"): r["outcome"],
-            t("체결 수", "Fills"): r["fills"], t("상태", "Status"): r["status"],
-        } for r in rows]), use_container_width=True, hide_index=True)
 
+    for r in rows:
+        pnl = r.get("realized_pnl")
+        pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(pnl)
+        pnl_cls = "i" if pnl is None else ("g" if pnl >= 0 else "b")
+        latest = r.get("latest_dt") or t("시간 확인 필요", "time unknown")
+        st.markdown(
+            f'''<div class="pf-card" style="margin:10px 0;">
+  <div class="pf-card-head">
+    <div>
+      <div class="pf-title">{esc(r.get("market"))}</div>
+      <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)}</div>
+    </div>
+    <span class="state {pnl_cls}">{esc(r.get("status"))}</span>
+  </div>
+  <div class="pf-metrics">
+    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
+    <div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(r.get("avg_sell_price", 0)) if r.get("sold_shares", 0) > 0 else "—"}</div></div>
+    <div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v">{pnl_text}</div></div>
+    <div class="pf-metric"><div class="k">{t("매수/매도 수량", "Bought/Sold")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {r.get("sold_shares", 0):.2f}</div></div>
+    <div class="pf-metric"><div class="k">{t("매수금/매도금", "Cost/Proceeds")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("sell_proceeds", 0))}</div></div>
+    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{r.get("remaining_shares", 0):.2f} · {money(r.get("remaining_cost", 0))}</div></div>
+  </div>
+  <div class="pf-note">{t("체결 수", "Fills")}: {int(r.get("fills", 0))}</div>
+</div>''',
+            unsafe_allow_html=True,
+        )
+
+
+def render_trade_event_cards(events, title=None):
+    events = events or []
+    if not events:
+        return
+    st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{title or t("인식된 비거래 이벤트", "Recognized non-trade events")}</div>', unsafe_allow_html=True)
+    for ev in events:
+        dt = parse_trade_datetime(ev)
+        when = dt.isoformat(timespec="minutes") if dt else t("시간 확인 필요", "time unknown")
+        detail = []
+        if ev.get("outcome"):
+            detail.append(str(ev.get("outcome")))
+        if ev.get("price") is not None:
+            detail.append(cents(float(ev.get("price"))))
+        if ev.get("shares") is not None:
+            detail.append(f'{float(ev.get("shares")):.2f} {t("주", "shares")}')
+        if ev.get("amount"):
+            detail.append(str(ev.get("amount")))
+        st.markdown(
+            f'''<div class="spec-row">
+  <div class="spec-key">{esc(ev.get("result", t("이벤트", "Event")))}</div>
+  <div class="spec-val"><b>{esc(ev.get("name", ""))}</b><br>{esc(" · ".join(detail) if detail else t("정산/이벤트 행으로 인식됨", "Recognized settlement/event row"))}</div>
+  <div class="footnote">{esc(when)}</div>
+</div>''',
+            unsafe_allow_html=True,
+        )
 
 
 def _norm_key(v):
@@ -2812,13 +2890,13 @@ st.markdown(
     f' · {t("감정 한도", "emotion cap")} {money(prof["emotional_limit"])}</div>',
     unsafe_allow_html=True)
 
-tab1, tab_ai, tab_pf, tab2, tab3, tab4, tab_set = st.tabs([
+tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
     t("AI 리서치", "AI research"),
     t("포트폴리오", "Portfolio"),
-    t("포지션 관리", "Positions"),
     t("부분매도", "Partial sell"),
     t("거래일지", "Journal"),
+    t("거래복기", "Trade Review"),
     t("설정 · 도구", "Settings · tools"),
 ])
 
@@ -2907,60 +2985,6 @@ def render_entry_result(r):
                    f"{money(r['stake'])} · {r['position_pct']:.1f}% | {r['decision']} | {r['final_score']:.0f}% / {r['value_score']:.0f}%")
         st.markdown(f'<div class="eyebrow" style="margin-top:20px;">{t("기록용 한 줄 요약", "One-line summary")}</div>', unsafe_allow_html=True)
         st.code(summary)
-
-
-def render_position_result(r):
-    if not r:
-        st.markdown(
-            f"""<div class="quiet">
-<div class="q-title">{t("포지션 결과가 여기에 표시됩니다", "Position verdict appears here")}</div>
-<div class="q-body">{t("오른쪽에서 현재가와 보유 수량을 입력하세요.", "Enter price and shares on the right.")}</div>
-</div>""", unsafe_allow_html=True)
-        return
-
-    k = verdict_dot(r["level"])
-    st.markdown(
-        f"""<div class="verdict">
-<div class="eyebrow">{t("포지션 판정", "Position verdict")}</div>
-<div class="v-title"><span class="dot {k}"></span>{r["decision"]}</div>
-<div class="v-sub">{r["name"]} · {t("현재가", "Price")} {cents(r["current_price"])}</div>
-</div>""", unsafe_allow_html=True)
-
-    pnl_tone = "pos" if r["pnl"] >= 0 else "neg"
-    st.markdown(
-        '<div class="stats">'
-        + stat(t("현재 평가금", "Current value"), money(r["current_value"]), t("현재가 × 수량", "Price × shares"))
-        + stat(t("즉시 매도 손익", "P&L if sold"), signed_money(r["pnl"]), f"{t('수익률','ROI')} {signed_pct(r['roi'])}", pnl_tone)
-        + stat(t("100¢ 상환 총액", "Value at 100¢"), money(r["shares"]), t("승리 시", "If it wins"))
-        + stat(t("실패 시 손실", "Loss if fails"), money(-r["current_value"]), t("평가금 전액", "Full value"), "neg")
-        + "</div>", unsafe_allow_html=True)
-
-    roi_kind = "g" if r["roi"] >= 0 else "b"
-    g_, c1_, c2_, blk_ = size_thresholds()
-    pp_kind = "b" if r["position_pct"] >= blk_ else "w" if r["position_pct"] >= c1_ else "g"
-    zl, zk, _, _ = price_zone(r["current_price"])
-    st.markdown(
-        meter(t("현재 수익률", "Current ROI"), max(r["roi"], -100), roi_kind, signed_pct(r["roi"]), max_v=100, unit="%")
-        + meter(t("포트폴리오 비중", "Portfolio share"), min(r["position_pct"], 100), pp_kind,
-                grade_word(pp_kind), unit="%")
-        + meter(t("현재가 위치", "Price position"), r["current_price"], zk, zl, unit="¢"),
-        unsafe_allow_html=True)
-
-    st.markdown(f'<div class="eyebrow" style="margin-top:20px;">{t("판단 근거", "Reasoning")}</div>', unsafe_allow_html=True)
-    notes = "".join(line(x, "g") for x in r["reasons"])
-    for w in r["warnings"]:
-        kind = "b" if (("금지" in w or "손절" in w or "축소" in w) or any(s in w.lower() for s in ["block", "reduce now"])) else "w"
-        notes += line(w, kind)
-    st.markdown(notes, unsafe_allow_html=True)
-
-    rows, need = partial_rows(r["shares"], r["current_price"], r["investment"])
-    st.markdown(f'<div class="eyebrow" style="margin-top:22px;">{t("부분매도 시나리오", "Partial-sell scenarios")}</div>', unsafe_allow_html=True)
-    if need is not None:
-        if need <= 100:
-            st.markdown(line(t(f"원금 회수 최소 매도 비율: <b>{need:.1f}%</b>", f"Min sell ratio to recover cost: <b>{need:.1f}%</b>"), "g"), unsafe_allow_html=True)
-        else:
-            st.markdown(line(t(f"100% 팔아도 원금 회수가 어렵습니다 (필요 {need:.1f}%).", f"Even 100% can't recover cost (needs {need:.1f}%)."), "w"), unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 # =====================================================
@@ -3247,49 +3271,6 @@ with tab1:
         _selected_entry_form(entry_category, entry_subcategory)
 
 # =====================================================
-# Tab 2 — Position
-# =====================================================
-with tab2:
-    left, right = st.columns([1.05, 0.95], gap="large")
-
-    with right:
-        st.markdown(f'<div class="eyebrow" style="margin-top:8px;">{t("입력", "Input")}</div>', unsafe_allow_html=True)
-        with st.form("position_form"):
-            name = st.text_input(t("거래 이름", "Trade name"), "KT Rolster vs Dplus KIA — Match Winner")
-            p1, p2 = st.columns(2)
-            with p1:
-                avg_buy = st.number_input(t("평균 매수가 (¢)", "Avg buy (¢)"), 1.0, 99.0, 52.4)
-                shares_in = st.number_input(t("보유 수량", "Shares"), 0.01, value=1164.12)
-                target_price = st.number_input(t("목표가 (¢)", "Target (¢)"), 1.0, 100.0, 60.0)
-            with p2:
-                current_price_p = st.number_input(t("현재가 (¢)", "Price (¢)"), 1.0, 100.0, 58.0)
-                investment = st.number_input(t("투자금 ($)", "Cost ($)"), 1.0, value=610.0)
-                stop_price_p = st.number_input(t("손절가 (¢)", "Stop (¢)"), 0.0, 99.0, 45.0)
-            fomo_p = st.slider(t("감정 위험 체크 수", "Emotion checks"), 0, 7, 0)
-            pos_submit = st.form_submit_button(t("포지션 판독하기", "Evaluate position"), use_container_width=True)
-
-        if pos_submit:
-            st.session_state.last_position = evaluate_position(dict(
-                name=name, avg_buy=avg_buy, current_price=current_price_p,
-                shares=shares_in, investment=investment,
-                target_price=target_price, stop_price=stop_price_p,
-                bankroll=effective_bankroll(), fomo_count=fomo_p))
-            st.rerun()
-
-        if st.session_state.last_position:
-            if st.button(t("이 포지션을 포트폴리오에 추가", "Add to Portfolio"), use_container_width=True):
-                r = st.session_state.last_position
-                st.session_state.portfolio.append(dict(
-                    name=r["name"], outcome="", buy=r["avg_buy"],
-                    shares=round(r["shares"], 2), inv=round(r["investment"], 2),
-                    cur=r["current_price"]))
-                st.toast(t("포트폴리오에 추가했습니다", "Added"))
-
-    with left:
-        render_position_result(st.session_state.last_position)
-
-
-# =====================================================
 # Tab 3 — Partial sell
 # =====================================================
 with tab3:
@@ -3329,14 +3310,17 @@ with tab3:
 with tab4:
     st.markdown(f'<div class="headline">{t("거래일지", "Journal")}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="subline">{t("거래일지는 두 가지 방식으로 분리합니다. ① 폴리마켓 지갑 주소로 체결내역을 불러와 조회 ② 직접 입력해 앱 내 계산기로 손익을 계산합니다. 붙여넣기 파싱은 형식이 자주 바뀌어 메인 흐름에서 제거했습니다.", "Journal is split into two modes: ① load activity from a Polymarket wallet ② manually enter trades and calculate P&L. Text-paste parsing is removed from the main flow because clipboard formats change often.")}</div>',
+        f'<div class="subline">{t("거래일지는 지갑 조회와 붙여넣기 정리로 분리됩니다. 지갑 거래는 auto_trades, 붙여넣기 거래는 paste_trades에 따로 저장되어 서로 합산되지 않습니다.", "Journal separates wallet import and paste-based organization. Wallet trades use auto_trades; pasted activity uses paste_trades. They are never merged.")}</div>',
         unsafe_allow_html=True,
     )
 
+    if st.session_state.get("journal_mode") not in ("wallet", "paste"):
+        st.session_state.journal_mode = "wallet"
+
     journal_mode = st.radio(
         t("거래일지 입력 방식", "Journal input mode"),
-        ["wallet", "manual"],
-        format_func=lambda c: t("폴리마켓 지갑으로 조회", "Load from Polymarket wallet") if c == "wallet" else t("직접 입력 · 계산기", "Manual entry · calculator"),
+        ["wallet", "paste"],
+        format_func=lambda c: t("폴리마켓 지갑으로 조회", "Load from Polymarket wallet") if c == "wallet" else t("활동내역 붙여넣기 정리", "Paste Activity text"),
         horizontal=True,
         key="journal_mode",
         label_visibility="collapsed",
@@ -3346,7 +3330,7 @@ with tab4:
         st.markdown(f'<div class="eyebrow">{t("폴리마켓 지갑 조회", "Polymarket wallet lookup")}</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="footnote" style="margin:0 0 10px 0;">'
-            f'{t("지갑 주소 기준으로 최근 체결내역을 불러옵니다. 이 모드는 자동 거래내역(auto_trades)만 다루며, 직접 입력 거래일지와 합치지 않습니다.", "Import recent wallet activity by wallet address. This mode only manages imported auto_trades and does not merge them with the manual journal.")}'
+            f'{t("지갑 주소 기준으로 최근 체결내역을 불러오고 최신 거래가 위에 오도록 정리합니다.", "Import recent wallet activity and display newest trades first.")}'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3370,8 +3354,9 @@ with tab4:
                     with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
                         raw = fetch_wallet_activity(a, limit=act_limit)
                     st.session_state.activity_raw = raw
-                    items = normalize_activity(raw)
+                    items = sort_trades_newest_first(normalize_activity(raw))
                     added = merge_activity_into_log(items)
+                    st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
                     st.markdown(line(t(f"자동 거래내역 {len(items)}건 확인 · 새로 추가 {added}건", f"Found {len(items)} auto trades · added {added}"), "g"), unsafe_allow_html=True)
                 except urllib.error.HTTPError as e:
                     st.markdown(line(t(f"거래내역 불러오기 실패 (HTTP {e.code})", f"Activity import failed (HTTP {e.code})"), "b"), unsafe_allow_html=True)
@@ -3383,9 +3368,9 @@ with tab4:
             sd, ed, date_label = render_trade_date_controls()
             filtered_trades, unknown_dates = filter_trades_by_date(st.session_state.get("auto_trades", []), sd, ed)
             if unknown_dates:
-                st.markdown(line(t(f"날짜 확인 필요 {unknown_dates}건은 제외되었습니다.", f"{unknown_dates} rows excluded (date unknown)."), "w"), unsafe_allow_html=True)
+                st.markdown(line(t(f"날짜 확인 필요 {unknown_dates}건은 선택 기간에서 제외되었습니다.", f"{unknown_dates} unknown-date rows excluded from the selected range."), "w"), unsafe_allow_html=True)
 
-            render_trade_pnl_summary(filtered_trades, date_label)
+            render_trade_pnl_summary(filtered_trades, date_label, title=t("지갑 거래내역 기준 추정손익", "Wallet activity estimated P&L"), key_prefix="wallet_")
 
             sm = habit_report(filtered_trades)
             if filtered_trades:
@@ -3398,125 +3383,105 @@ with tab4:
                 )
                 st.markdown(''.join(f'<div class="trade-insight"><span class="dot {kk}"></span>{esc(txt)}</div>' for kk, txt in sm.get("habit_insights", [])), unsafe_allow_html=True)
 
-            with st.expander(t("기간 내 원본 자동 거래내역", "Raw imported trades in selected range"), expanded=False):
-                auto_view = pd.DataFrame([{
-                    t("날짜", "Date"): str(tr.get("d") or "")[:16],
-                    t("시장", "Market"): tr.get("name") or tr.get("title") or tr.get("market") or "",
-                    t("선택", "Outcome"): tr.get("outcome", ""),
-                    t("매수/매도", "Side"): tr.get("side", ""),
-                    t("가격", "Price"): cents(_norm_price_cent(tr.get("price"))),
-                    t("수량", "Shares"): tr.get("shares") or tr.get("size") or 0,
-                    t("금액", "Amount"): money(safe_trade_float(tr.get("amount", tr.get("usdcSize", 0)))),
-                } for tr in filtered_trades])
-                if not auto_view.empty:
-                    st.dataframe(auto_view, use_container_width=True, hide_index=True)
-                    csv_auto = auto_view.to_csv(index=False).encode("utf-8-sig")
-                    st.download_button(t("선택 기간 CSV", "Download selected range CSV"), data=csv_auto, file_name="memento_auto_trades_filtered.csv", mime="text/csv", use_container_width=True)
-                else:
-                    st.markdown(f'<div class="footnote">{t("선택한 기간의 원본 거래내역이 없습니다.", "No raw trades in the selected range.")}</div>', unsafe_allow_html=True)
+            cdl, crs = st.columns(2)
+            with cdl:
+                csv_auto = pd.DataFrame(filtered_trades).to_csv(index=False).encode("utf-8-sig") if filtered_trades else b""
+                st.download_button(t("선택 기간 CSV", "Download selected range CSV"), data=csv_auto, file_name="memento_auto_trades_filtered.csv", mime="text/csv", use_container_width=True)
+            with crs:
                 if st.button(t("자동 거래내역 전체 비우기", "Clear all auto trades"), use_container_width=True, key="clear_auto_trades_btn"):
                     st.session_state.auto_trades = []
                     st.session_state.imported_tx_ids = []
                     st.rerun()
         else:
-            st.markdown(f'<div class="footnote">{t("지갑 주소를 불러오면 기간별 추정손익과 거래습관 분석이 여기에 표시됩니다.", "Import wallet activity to see date-based estimated P&L and habit analysis here.")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="quiet"><div class="q-title">{t("불러온 지갑 거래내역이 없습니다", "No wallet activity loaded")}</div><div class="q-body">{t("지갑 주소를 불러오면 기간별 추정손익과 거래습관 분석이 표시됩니다.", "Import a wallet to see date-based estimated P&L and habit analysis.")}</div></div>', unsafe_allow_html=True)
 
         if st.session_state.get("dev_mode", False):
             with st.expander(t("디버그 — activity raw 응답", "Debug — raw activity response")):
                 st.json(st.session_state.activity_raw)
 
     else:
-        st.markdown(f'<div class="eyebrow">{t("직접 입력 · 계산기", "Manual entry · calculator")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="eyebrow">{t("활동내역 붙여넣기 정리", "Paste Activity text")}</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="footnote" style="margin:0 0 10px 0;">'
-            f'{t("직접 입력은 내가 확정한 매수가·매도가·투자금 기준으로 실현손익을 계산합니다. 지갑 조회 모드의 자동 거래내역과는 별도로 보관됩니다.", "Manual entries calculate realized P&L from the buy price, sell price, and stake you confirm. They are stored separately from wallet-imported activity.")}'
+            f'{t("Polymarket Activity 화면에서 보이는 텍스트를 그대로 붙여넣으면 매수·매도·손실·상환 행을 인식해 시장별로 정리합니다. 붙여넣기 결과는 지갑 조회 거래내역과 합산하지 않습니다.", "Paste the visible Polymarket Activity text. Buys, sells, losses, and redemptions are recognized and grouped by market. Pasted rows are not merged with wallet-imported rows.")}'
             f'</div>',
             unsafe_allow_html=True,
         )
 
-        with st.form("trade_form"):
-            t1c, t2c, t3c = st.columns(3)
-            with t1c:
-                tname = st.text_input(t("거래 이름", "Trade name"), "T1 vs HLE — Match Winner")
-                tbuy = st.number_input(t("매수가 (¢)", "Buy (¢)"), 1.0, 99.0, 52.0, key="jb")
-            with t2c:
-                tsell = st.number_input(t("매도가 (¢)", "Sell (¢)"), 0.0, 100.0, 78.0, key="js")
-                tstake = st.number_input(t("투자금 ($)", "Stake ($)"), 1.0, value=50.0, key="jst")
-            with t3c:
-                tdate = st.date_input(t("거래일", "Date"), value=date.today())
-                tmemo = st.text_input(t("메모", "Memo"), "")
-            add = st.form_submit_button(t("기록 추가", "Add"), use_container_width=True)
+        paste_text = st.text_area(
+            t("거래내역 텍스트", "Activity text"),
+            value="",
+            height=220,
+            key="paste_activity_text",
+            placeholder="매수\nicon for Jordan vs. Algeria: O/U 6.5 Total Corners\nJordan vs. Algeria: O/U 6.5 Total Corners\nUnder 27.6¢\n30.0 주\n-$8.28\n2시 전",
+            label_visibility="collapsed",
+        )
 
-        if add:
-            tsh = tstake / (tbuy / 100)
-            tp = tsh * (tsell / 100) - tstake
-            tr_ = tp / tstake * 100
-            st.session_state.trade_log.append({
-                "d": datetime.combine(tdate, datetime.min.time()).isoformat(),
-                "name": tname, "buy": tbuy, "sell": tsell, "stake": tstake,
-                "profit": round(tp, 2), "roi": round(tr_, 1), "memo": tmemo,
-            })
-            st.toast(f"{signed_money(tp)} ({signed_pct(tr_)})")
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            parse_now = st.button(t("붙여넣기 정리", "Organize pasted activity"), use_container_width=True, key="parse_paste_activity_btn")
+        with pc2:
+            clear_paste = st.button(t("붙여넣기 결과 비우기", "Clear pasted result"), use_container_width=True, key="clear_paste_activity_btn")
+
+        if clear_paste:
+            st.session_state.paste_trades = []
+            st.session_state.paste_events = []
+            st.session_state.paste_unparsed = []
+            st.session_state.paste_meta = {"ok": 0, "buy": 0, "sell": 0, "events": [], "unparsed": []}
             st.rerun()
 
-        if st.session_state.trade_log:
-            view = pd.DataFrame([{
-                t("날짜", "Date"): tr["d"][:10], t("거래", "Trade"): tr["name"],
-                t("매수가", "Buy"): cents(tr["buy"]), t("매도가", "Sell"): cents(tr["sell"]),
-                t("투자금", "Stake"): money(tr["stake"]), t("손익", "P&L"): signed_money(tr["profit"]),
-                t("수익률", "ROI"): signed_pct(tr["roi"]), t("메모", "Memo"): tr["memo"],
-            } for tr in st.session_state.trade_log])
-            st.dataframe(view, use_container_width=True, hide_index=True)
+        if parse_now:
+            parsed_rows, meta = parse_pasted_activity(paste_text)
+            st.session_state.paste_trades = sort_trades_newest_first(parsed_rows)
+            st.session_state.paste_events = meta.get("events", [])
+            st.session_state.paste_unparsed = meta.get("unparsed", [])
+            st.session_state.paste_meta = meta
+            st.markdown(line(t(f"정리 완료 — 매수 {meta.get('buy', 0)}건 · 매도 {meta.get('sell', 0)}건 · 이벤트 {len(meta.get('events', []))}건", f"Organized — buys {meta.get('buy', 0)} · sells {meta.get('sell', 0)} · events {len(meta.get('events', []))}"), "g"), unsafe_allow_html=True)
 
-            total_realized = sum(tr["profit"] for tr in st.session_state.trade_log)
-            k = "g" if total_realized >= 0 else "b"
-            st.markdown(line(t(f"거래 {len(st.session_state.trade_log)}건 · 총 실현손익 <b>{signed_money(total_realized)}</b>",
-                               f"{len(st.session_state.trade_log)} trades · total <b>{signed_money(total_realized)}</b>"), k), unsafe_allow_html=True)
+        meta = st.session_state.get("paste_meta", {}) or {}
+        if st.session_state.get("paste_trades") or st.session_state.get("paste_events") or st.session_state.get("paste_unparsed"):
+            st.markdown(
+                '<div class="stats">'
+                + stat(t("매수 인식", "Buys parsed"), f"{int(meta.get('buy', 0))}", "")
+                + stat(t("매도 인식", "Sells parsed"), f"{int(meta.get('sell', 0))}", "")
+                + stat(t("이벤트 인식", "Events recognized"), f"{len(st.session_state.get('paste_events', []))}", t("손실·상환·정산 등", "loss/redeem/settle"))
+                + stat(t("확인 필요", "Needs review"), f"{len(st.session_state.get('paste_unparsed', []))}", t("불완전 행만", "incomplete only"), "neg" if st.session_state.get("paste_unparsed") else "")
+                + "</div>", unsafe_allow_html=True
+            )
 
-            csv = view.to_csv(index=False).encode("utf-8-sig")
-            cdl, crs = st.columns(2)
-            with cdl:
-                st.download_button(t("CSV 내려받기", "Download CSV"), data=csv, file_name="memento_trades.csv",
-                                   mime="text/csv", use_container_width=True)
-            with crs:
-                if st.button(t("거래일지 비우기", "Clear journal"), use_container_width=True, key="clear_manual_journal_btn"):
-                    st.session_state.trade_log = []
-                    st.rerun()
+        if st.session_state.get("paste_trades"):
+            render_trade_pnl_summary(
+                st.session_state.get("paste_trades", []),
+                title=t("붙여넣기 거래내역 기준 추정손익", "Pasted activity estimated P&L"),
+                key_prefix="paste_",
+            )
         else:
-            st.markdown(f'<div class="footnote">{t("아직 기록된 거래가 없습니다.", "No trades yet.")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="quiet"><div class="q-title">{t("아직 정리된 붙여넣기 거래가 없습니다", "No pasted trades organized yet")}</div><div class="q-body">{t("Activity 텍스트를 붙여넣고 ‘붙여넣기 정리’를 누르세요.", "Paste Activity text and press Organize.")}</div></div>', unsafe_allow_html=True)
 
-        with st.expander(t("거래 복기", "Trade review")):
-            with st.form("review_form"):
-                rv_name = st.text_input(t("어떤 거래?", "Which trade?"),
-                    st.session_state.trade_log[-1]["name"] if st.session_state.trade_log else "")
-                r1, r2 = st.columns(2)
-                with r1:
-                    rv_plan = st.radio(t("계획대로 진입했는가?", "Entered as planned?"), ["Yes", "No"], horizontal=True)
-                    rv_stop = st.radio(t("손절 기준을 지켰는가?", "Followed stop rule?"), ["Yes", "No"], horizontal=True)
-                with r2:
-                    rv_emo = st.radio(t("감정적으로 진입했는가?", "Entered emotionally?"), ["No", "Yes"], horizontal=True)
-                    rv_tp = st.radio(t("익절 기준을 지켰는가?", "Followed TP rule?"), ["Yes", "No"], horizontal=True)
-                rv_reason = st.text_area(t("진입 이유", "Why did you enter?"), height=70)
-                rv_one = st.text_input(t("결과 한 줄 복기", "One-line review"))
-                rv_fix = st.text_input(t("다음 거래에서 고칠 점", "Fix for next trade"))
-                rv_save = st.form_submit_button(t("복기 저장", "Save review"), use_container_width=True)
+        render_trade_event_cards(st.session_state.get("paste_events", []), title=t("인식된 손실·상환·정산 이벤트", "Recognized loss/redemption/settlement events"))
 
-            if rv_save:
-                st.session_state.reviews.append({
-                    t("날짜", "Date"): date.today().isoformat(),
-                    t("거래", "Trade"): rv_name,
-                    t("계획 진입", "Planned"): rv_plan,
-                    t("감정 진입", "Emotional"): rv_emo,
-                    t("손절 준수", "Stop kept"): rv_stop,
-                    t("익절 준수", "TP kept"): rv_tp,
-                    t("진입 이유", "Reason"): rv_reason,
-                    t("복기", "Review"): rv_one,
-                    t("개선점", "Fix"): rv_fix,
-                })
-                st.toast(t("저장했습니다", "Saved"))
+        if st.session_state.get("paste_unparsed"):
+            with st.expander(t("확인 필요 행", "Rows needing review"), expanded=False):
+                for title_, reason_ in st.session_state.get("paste_unparsed", []):
+                    st.markdown(line(f"<b>{esc(title_)}</b> · {esc(reason_)}", "w"), unsafe_allow_html=True)
 
-            if st.session_state.reviews:
-                st.dataframe(pd.DataFrame(st.session_state.reviews), use_container_width=True, hide_index=True)
+
+# =====================================================
+# Tab — Trade Review
+# =====================================================
+with tab_review:
+    st.markdown(f'<div class="headline">{t("거래복기", "Trade Review")}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="subline">{t("저장한 거래 복기와 개선점을 나중에 정리하는 공간입니다. 아직 실제 기능은 넣지 않았습니다.", "Saved trade reviews and lessons will be organized here later. No real functionality is enabled yet.")}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'''<div class="quiet">
+<div class="q-title">{t("거래복기 준비 중", "Trade Review placeholder")}</div>
+<div class="q-body">{t("앞으로 선택한 거래를 저장하고 진입 이유, 감정 상태, 개선점을 정리할 수 있게 만들 예정입니다.", "Later this tab will let you save selected trades and review entry reason, emotional state, and lessons.")}</div>
+</div>''',
+        unsafe_allow_html=True,
+    )
 
 
 # =====================================================
