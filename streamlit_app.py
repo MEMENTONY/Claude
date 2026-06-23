@@ -464,6 +464,7 @@ DEFAULTS = {
     "_ai_bk_cache": "",
     "dev_mode": False,
     "reviews": [],
+    "review_notes": {},
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -2474,20 +2475,224 @@ def group_auto_trades_for_pnl(auto_trades):
     return sorted(rows, key=lambda r: (r.get("_latest_ts", -1), abs(r.get("realized_pnl") or 0), r.get("buy_cost", 0)), reverse=True)
 
 
+
+def _norm_trade_text(v):
+    '''Normalize market/outcome text for settlement-event matching.'''
+    s = re.sub(r"\s+", " ", str(v or "").strip().lower())
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def _parse_event_amount(v):
+    '''Return signed USD amount from '+$1.23', '$1.23', '-$1.23'; None for '-' / unknown.'''
+    s = str(v or "").strip()
+    if not s or s == "-":
+        return None
+    m = re.search(r"([+\-]?)\s*\$\s*([\d,]+(?:\.\d+)?)", s)
+    if not m:
+        return None
+    amt = safe_trade_float(m.group(2).replace(",", ""), 0.0)
+    return -amt if m.group(1) == "-" else amt
+
+
+def _event_kind(ev):
+    raw = f"{ev.get('result', '')} {ev.get('type', '')} {ev.get('label', '')}".lower()
+    if any(k in raw for k in ("손실", "loss", "lost")):
+        return "loss"
+    if any(k in raw for k in ("상환", "수익", "redeem", "redemption", "profit", "won", "win")):
+        return "redeem"
+    if any(k in raw for k in ("정산", "settle", "settled")):
+        return "settled"
+    return "event"
+
+
+def _match_event_to_group(ev, rows):
+    '''Find the best open group for one recognized settlement/loss event.'''
+    ev_market = _norm_trade_text(ev.get("name"))
+    ev_outcome = _norm_trade_text(ev.get("outcome"))
+    ev_shares = safe_trade_float(ev.get("shares"), 0.0)
+    candidates = []
+    for r in rows:
+        if r.get("_adjusted"):
+            continue
+        remaining = safe_trade_float(r.get("remaining_shares"), 0.0)
+        if remaining <= 1e-6:
+            continue
+        r_market = _norm_trade_text(r.get("market"))
+        r_outcome = _norm_trade_text(r.get("outcome"))
+        if not ev_market or not r_market:
+            continue
+        market_match = (ev_market == r_market) or (ev_market in r_market) or (r_market in ev_market)
+        outcome_match = (not ev_outcome) or (not r_outcome) or ev_outcome == r_outcome or ev_outcome in r_outcome or r_outcome in ev_outcome
+        if not (market_match and outcome_match):
+            continue
+        score = 100 if ev_market == r_market else 70
+        if ev_outcome and r_outcome and ev_outcome == r_outcome:
+            score += 30
+        if ev_shares > 0:
+            tolerance = max(0.25, remaining * 0.03)
+            diff = abs(ev_shares - remaining)
+            if diff <= tolerance:
+                score += 50
+            else:
+                score -= min(45, diff)
+        candidates.append((score, r))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_score, best = candidates[0]
+    if len(candidates) > 1 and best_score == candidates[1][0]:
+        return None
+    return best if best_score >= 80 else None
+
+
+def link_settlement_events_to_trade_groups(rows, events):
+    '''Attach recognized settlement/loss/redemption events to matching open trade groups.'''
+    rows = [dict(r) for r in (rows or [])]
+    events = events or []
+    for ev in events:
+        if isinstance(ev, dict):
+            ev.pop("_linked_to", None)
+            ev.pop("_linked_note", None)
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        kind = _event_kind(ev)
+        if kind not in ("loss", "redeem", "settled"):
+            continue
+        match = _match_event_to_group(ev, rows)
+        if not match:
+            continue
+        event_amount = _parse_event_amount(ev.get("amount"))
+        buy_cost = safe_trade_float(match.get("buy_cost"), 0.0)
+        proceeds = safe_trade_float(match.get("sell_proceeds"), 0.0)
+        if kind == "loss":
+            status = t("손실 정산됨", "Settled as loss")
+            note = t("손실 이벤트 자동 연결됨", "Loss event auto-linked")
+            adjusted_pnl = proceeds - buy_cost
+            effective_proceeds = proceeds
+        elif kind == "redeem":
+            status = t("상환/수익 정산됨", "Redeemed / settled")
+            note = t("상환/수익 이벤트 자동 연결됨", "Redemption/profit event auto-linked")
+            adjusted_pnl = None if event_amount is None else proceeds + event_amount - buy_cost
+            effective_proceeds = proceeds + (event_amount or 0.0)
+        else:
+            status = t("정산됨", "Settled")
+            note = t("정산 이벤트 자동 연결됨", "Settlement event auto-linked")
+            adjusted_pnl = None if event_amount is None else proceeds + event_amount - buy_cost
+            effective_proceeds = proceeds + (event_amount or 0.0)
+        match.update({
+            "_adjusted": True,
+            "linked_event_type": kind,
+            "linked_event_amount": event_amount,
+            "linked_event_shares": ev.get("shares"),
+            "linked_event_time": ev.get("d"),
+            "linked_event_note": note,
+            "adjusted_status": status,
+            "adjusted_realized_pnl": None if adjusted_pnl is None else round(adjusted_pnl, 2),
+            "adjusted_effective_proceeds": round(effective_proceeds, 2),
+            "adjusted_remaining_shares": 0.0,
+            "adjusted_remaining_cost": 0.0,
+        })
+        ev["_linked_to"] = match.get("key")
+        ev["_linked_note"] = note
+    return rows
+
+
+def _display_realized(r):
+    if r.get("_adjusted"):
+        return r.get("adjusted_realized_pnl")
+    return r.get("realized_pnl")
+
+
+def _display_remaining_shares(r):
+    return safe_trade_float(r.get("adjusted_remaining_shares"), 0.0) if r.get("_adjusted") else safe_trade_float(r.get("remaining_shares"), 0.0)
+
+
+def _display_remaining_cost(r):
+    return safe_trade_float(r.get("adjusted_remaining_cost"), 0.0) if r.get("_adjusted") else safe_trade_float(r.get("remaining_cost"), 0.0)
+
+
 def summarize_selected_trade_groups(rows, selected_keys):
     sel = [r for r in rows if r["key"] in selected_keys] or rows
     buy_cost = sum(safe_trade_float(r.get("buy_cost"), 0) for r in sel)
-    proceeds = sum(safe_trade_float(r.get("sell_proceeds"), 0) for r in sel)
-    realized = sum(safe_trade_float(r.get("realized_pnl"), 0) for r in sel if r.get("realized_pnl") is not None)
-    remaining = sum(safe_trade_float(r.get("remaining_shares"), 0) for r in sel)
-    remaining_cost = sum(safe_trade_float(r.get("remaining_cost"), 0) for r in sel)
-    any_unverified = any(r.get("realized_pnl") is None for r in sel)
+    proceeds = sum(safe_trade_float(r.get("adjusted_effective_proceeds", r.get("sell_proceeds")), 0) for r in sel)
+    realized_vals = [_display_realized(r) for r in sel]
+    realized = sum(safe_trade_float(v, 0) for v in realized_vals if v is not None)
+    remaining = sum(_display_remaining_shares(r) for r in sel)
+    remaining_cost = sum(_display_remaining_cost(r) for r in sel)
+    any_unverified = any(v is None for v in realized_vals)
     return {"buy_cost": buy_cost, "sell_proceeds": proceeds, "realized_pnl": realized,
             "remaining_shares": remaining, "remaining_cost": remaining_cost, "unverified": any_unverified}
 
 
-def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=""):
+def _safe_review_id_part(v):
+    s = re.sub(r"\s+", "_", str(v or "").strip().lower())
+    s = re.sub(r"[^0-9a-zA-Z가-힣_\-.]+", "", s)
+    return s[:80] or "item"
+
+
+def _review_widget_key(prefix, review_id):
+    return f"{prefix}_{_safe_review_id_part(review_id)}"
+
+
+def make_review_id_from_trade_group(r, source="paste"):
+    base = "|".join([
+        str(source or "trade"), str(r.get("key", "")), str(r.get("market", "")),
+        str(r.get("outcome", "")), str(r.get("token_id", "")),
+        str(r.get("avg_buy_price", "")), str(r.get("avg_sell_price", "")),
+        str(r.get("latest_dt", "")),
+    ])
+    return _safe_review_id_part(base)
+
+
+def build_review_item_from_trade_group(r, source="paste"):
+    rid = make_review_id_from_trade_group(r, source)
+    pnl = _display_realized(r)
+    return {
+        "review_id": rid,
+        "source": source,
+        "market": r.get("market", ""),
+        "outcome": r.get("outcome", ""),
+        "token_id": r.get("token_id", ""),
+        "avg_buy_price": r.get("avg_buy_price", 0.0),
+        "avg_sell_price": r.get("avg_sell_price", 0.0),
+        "bought_shares": r.get("bought_shares", 0.0),
+        "sold_shares": r.get("sold_shares", 0.0),
+        "buy_cost": r.get("buy_cost", 0.0),
+        "sell_proceeds": r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0.0)),
+        "estimated_realized_pnl": pnl,
+        "remaining_shares": _display_remaining_shares(r),
+        "remaining_cost": _display_remaining_cost(r),
+        "status": r.get("adjusted_status") or r.get("status", ""),
+        "linked_event_type": r.get("linked_event_type", ""),
+        "linked_event_note": r.get("linked_event_note", ""),
+        "linked_event_amount": r.get("linked_event_amount"),
+        "linked_event_shares": r.get("linked_event_shares"),
+        "linked_event_time": r.get("linked_event_time", ""),
+        "latest_dt": r.get("latest_dt", ""),
+        "created_at": datetime.now(KST).isoformat(timespec="seconds"),
+    }
+
+
+def add_review_items_from_trade_groups(selected_rows, source="paste"):
+    existing = st.session_state.get("reviews", [])
+    existing_ids = {str(x.get("review_id")) for x in existing if isinstance(x, dict)}
+    added = 0
+    for r in selected_rows or []:
+        item = build_review_item_from_trade_group(r, source)
+        if item["review_id"] in existing_ids:
+            continue
+        existing.append(item)
+        existing_ids.add(item["review_id"])
+        added += 1
+    st.session_state.reviews = existing
+    return added
+
+
+def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix="", events=None):
     rows = group_auto_trades_for_pnl(auto_trades)
+    if events:
+        rows = link_settlement_events_to_trade_groups(rows, events)
     if not rows:
         st.markdown(f'<div class="footnote">{t("해당 기간 거래내역이 없습니다.", "No trades in this range.")}</div>', unsafe_allow_html=True)
         return
@@ -2495,51 +2700,90 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
     s0 = summarize_selected_trade_groups(rows, [])
     range_label = f" · {date_label}" if date_label else ""
     header_text = title or t("거래내역 기준 추정손익", "Estimated P&L from trade history")
+    linked_count = sum(1 for r in rows if r.get("_adjusted"))
     st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{header_text}{range_label}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="stats">'
         + stat(t("총 매수금", "Buy cost"), money(s0["buy_cost"]), "")
-        + stat(t("총 매도금", "Proceeds"), money(s0["sell_proceeds"]), "")
-        + stat(t("실현손익(추정)", "Realized (est)"), signed_money(s0["realized_pnl"]), t("매도금−대응매수원가", "proceeds−matched cost"), "pos" if s0["realized_pnl"] >= 0 else "neg")
+        + stat(t("총 회수금", "Recovered"), money(s0["sell_proceeds"]), t("매도금+정산금", "proceeds+settlement"))
+        + stat(t("실현손익(추정)", "Realized (est)"), signed_money(s0["realized_pnl"]), t("정산 이벤트 반영", "settlement events applied") if linked_count else t("매도금−대응매수원가", "proceeds−matched cost"), "pos" if s0["realized_pnl"] >= 0 else "neg")
         + stat(t("잔여 수량", "Remaining"), f'{s0["remaining_shares"]:.2f}', t(f"원가 {money(s0['remaining_cost'])}", f"cost {money(s0['remaining_cost'])}"))
         + "</div>", unsafe_allow_html=True)
+    if linked_count:
+        st.markdown(line(t(f"정산/손실 이벤트 {linked_count}건을 거래 요약에 자동 연결했습니다.", f"Auto-linked {linked_count} settlement/loss event(s) to trade summaries."), "g"), unsafe_allow_html=True)
     if s0["unverified"]:
-        st.markdown(line(t("일부 항목은 매도 수량이 매수보다 많아 손익이 부정확할 수 있습니다.", "Some rows have sold>bought; P&L may be off."), "w"), unsafe_allow_html=True)
+        st.markdown(line(t("일부 정산 항목은 금액 정보가 없어 손익 확인이 필요합니다.", "Some settlement rows have no amount; P&L needs review."), "w"), unsafe_allow_html=True)
     st.markdown(f'<div class="footnote">{t("추정치입니다. 공식 포트폴리오 손익과 별개이며 아직 합산하지 않습니다.", "Estimate only. Separate from official portfolio P&L; not merged yet.")}</div>', unsafe_allow_html=True)
 
-    for r in rows:
-        pnl = r.get("realized_pnl")
+    selected_for_review = []
+    source = "wallet" if str(key_prefix or "").startswith("wallet") else "paste"
+    for idx, r in enumerate(rows):
+        pnl = _display_realized(r)
         pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(pnl)
         pnl_cls = "i" if pnl is None else ("g" if pnl >= 0 else "b")
         latest = r.get("latest_dt") or t("시간 확인 필요", "time unknown")
-        st.markdown(
-            f'''<div class="pf-card" style="margin:10px 0;">
+        status_text = r.get("adjusted_status") or r.get("status")
+        rem_shares = _display_remaining_shares(r)
+        rem_cost = _display_remaining_cost(r)
+        pnl_label = t("실현손익(추정 · 정산반영)", "Realized est. · settlement applied") if r.get("_adjusted") else t("실현손익(추정)", "Realized est.")
+        note_parts = [f'{t("체결 수", "Fills")}: {int(r.get("fills", 0))}']
+        if r.get("linked_event_note"):
+            note_parts.append(str(r.get("linked_event_note")))
+            if r.get("linked_event_shares") is not None:
+                note_parts.append(f'{float(r.get("linked_event_shares")):.2f} {t("주", "shares")}')
+            if r.get("linked_event_amount") is not None:
+                note_parts.append(money(float(r.get("linked_event_amount"))))
+        rid = make_review_id_from_trade_group(r, source)
+        csel, cbody = st.columns([0.28, 3.72])
+        with csel:
+            send_flag = st.checkbox(
+                t("거래복기로 보내기", "Send to review"),
+                key=f"review_send_{key_prefix}_{idx}_{rid}",
+                label_visibility="collapsed",
+            )
+        with cbody:
+            st.markdown(
+                f'''<div class="pf-card" style="margin:10px 0;">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
       <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)}</div>
     </div>
-    <span class="state {pnl_cls}">{esc(r.get("status"))}</span>
+    <span class="state {pnl_cls}">{esc(status_text)}</span>
   </div>
   <div class="pf-metrics">
     <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
     <div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(r.get("avg_sell_price", 0)) if r.get("sold_shares", 0) > 0 else "—"}</div></div>
-    <div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v">{pnl_text}</div></div>
+    <div class="pf-metric"><div class="k">{pnl_label}</div><div class="v">{pnl_text}</div></div>
     <div class="pf-metric"><div class="k">{t("매수/매도 수량", "Bought/Sold")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {r.get("sold_shares", 0):.2f}</div></div>
-    <div class="pf-metric"><div class="k">{t("매수금/매도금", "Cost/Proceeds")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("sell_proceeds", 0))}</div></div>
-    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{r.get("remaining_shares", 0):.2f} · {money(r.get("remaining_cost", 0))}</div></div>
+    <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
+    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>
   </div>
-  <div class="pf-note">{t("체결 수", "Fills")}: {int(r.get("fills", 0))}</div>
+  <div class="pf-note">{esc(" · ".join(note_parts))}</div>
 </div>''',
-            unsafe_allow_html=True,
-        )
+                unsafe_allow_html=True,
+            )
+        if send_flag:
+            selected_for_review.append(r)
+
+    if selected_for_review:
+        if st.button(t("선택한 거래를 거래복기로 보내기", "Send selected trades to Trade Review"),
+                     key=f"send_selected_review_{key_prefix}", use_container_width=True):
+            added = add_review_items_from_trade_groups(selected_for_review, source)
+            if added:
+                st.success(t(f"거래복기에 {added}건을 보냈습니다.", f"Sent {added} trade(s) to Trade Review."))
+            else:
+                st.info(t("이미 거래복기에 있는 항목입니다.", "Selected trade(s) already exist in Trade Review."))
 
 
 def render_trade_event_cards(events, title=None):
     events = events or []
     if not events:
         return
+    linked = sum(1 for ev in events if isinstance(ev, dict) and ev.get("_linked_to"))
     st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{title or t("인식된 비거래 이벤트", "Recognized non-trade events")}</div>', unsafe_allow_html=True)
+    if linked and linked == len(events):
+        st.markdown(line(t("모든 정산 이벤트가 거래 요약에 연결되었습니다.", "All settlement events were linked to trade summaries."), "g"), unsafe_allow_html=True)
     for ev in events:
         dt = parse_trade_datetime(ev)
         when = dt.isoformat(timespec="minutes") if dt else t("시간 확인 필요", "time unknown")
@@ -2552,11 +2796,14 @@ def render_trade_event_cards(events, title=None):
             detail.append(f'{float(ev.get("shares")):.2f} {t("주", "shares")}')
         if ev.get("amount"):
             detail.append(str(ev.get("amount")))
+        if ev.get("_linked_note"):
+            detail.append(str(ev.get("_linked_note")))
+        state_html = f'<span class="state g">{t("연결됨", "Linked")}</span>' if ev.get("_linked_to") else f'<span class="state w">{t("미연결", "Unlinked")}</span>'
         st.markdown(
             f'''<div class="spec-row">
   <div class="spec-key">{esc(ev.get("result", t("이벤트", "Event")))}</div>
   <div class="spec-val"><b>{esc(ev.get("name", ""))}</b><br>{esc(" · ".join(detail) if detail else t("정산/이벤트 행으로 인식됨", "Recognized settlement/event row"))}</div>
-  <div class="footnote">{esc(when)}</div>
+  <div>{state_html}<div class="footnote">{esc(when)}</div></div>
 </div>''',
             unsafe_allow_html=True,
         )
@@ -3144,14 +3391,23 @@ def _selected_entry_form(entry_category, entry_subcategory):
         bk_memo = st.text_input(t("외부배당 출처 메모", "Bookmaker/source memo"), key="sel_bm", placeholder=t("예: Pinnacle T1 -180, Bet365 Gen.G 1.55", "e.g. Pinnacle T1 -180, Bet365 Gen.G 1.55"))
         ai_memo = st.text_area(t("AI 리서치 메모 / 외부정보", "AI research memo / external info"), key="sel_ai_memo", height=84,
                                placeholder=t("최근 10경기·상대전적·순위·라인업·부상·뉴스 링크 붙여넣기", "recent 10, h2h, standings, lineup, injuries, news links"))
-        with st.expander(t("고급 (감정·중복노출)", "Advanced (emotion·stacking)")):
-            fomo = st.slider(t("감정 체크", "Emotion"), 0, 7, 0, key="sel_fomo")
+        with st.expander(t("고급 (감정·중복노출)", "Advanced (emotion · duplicate exposure)")):
+            a1, a2 = st.columns(2)
+            with a1:
+                fomo = st.slider(t("감정 체크", "Emotion check"), 0, 7, 0, key="sel_fomo")
+                prev_good = st.number_input(t("처음 봤던 좋은 가격(¢)", "Previous good price (¢)"), min_value=0.0, max_value=99.0, value=0.0, key="sel_prev_good")
+            with a2:
+                dup_ml = st.number_input(t("중복 Moneyline 노출($)", "Duplicate ML exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_ml")
+                dup_game = st.number_input(t("중복 Game/Map 노출($)", "Duplicate game/map exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_game")
+                dup_side = st.number_input(t("같은 방향 총 노출($)", "Same-side exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_side")
         go = st.form_submit_button(t("분석", "Analyze"), use_container_width=True)
 
     if go:
         analyze_entry_row(sel, stake, fair, conf, purp, category=entry_category, subcategory=entry_subcategory, ai_context=ai_memo,
                           adv={"target_price": target, "stop_price": stop, "bookmaker_prob": bk,
                                "bookmaker_source_memo": bk_memo, "ai_extra_context": ai_memo,
+                               "previous_good_price": prev_good, "duplicate_ml": dup_ml,
+                               "duplicate_game": dup_game, "duplicate_side": dup_side,
                                "fomo_count": fomo, "market_type": "Match Moneyline"})
         st.session_state._entry_active = keytok
         st.rerun()
@@ -3454,6 +3710,7 @@ with tab4:
                 st.session_state.get("paste_trades", []),
                 title=t("붙여넣기 거래내역 기준 추정손익", "Pasted activity estimated P&L"),
                 key_prefix="paste_",
+                events=st.session_state.get("paste_events", []),
             )
         else:
             st.markdown(f'<div class="quiet"><div class="q-title">{t("아직 정리된 붙여넣기 거래가 없습니다", "No pasted trades organized yet")}</div><div class="q-body">{t("Activity 텍스트를 붙여넣고 ‘붙여넣기 정리’를 누르세요.", "Paste Activity text and press Organize.")}</div></div>', unsafe_allow_html=True)
@@ -3472,16 +3729,118 @@ with tab4:
 with tab_review:
     st.markdown(f'<div class="headline">{t("거래복기", "Trade Review")}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="subline">{t("저장한 거래 복기와 개선점을 나중에 정리하는 공간입니다. 아직 실제 기능은 넣지 않았습니다.", "Saved trade reviews and lessons will be organized here later. No real functionality is enabled yet.")}</div>',
+        f'<div class="subline">{t("거래일지에서 보낸 거래를 기준으로 스스로 진입 근거와 매도 타이밍을 복기합니다.", "Review trades sent from Journal and evaluate your own entry logic and exit timing.")}</div>',
         unsafe_allow_html=True,
     )
-    st.markdown(
-        f'''<div class="quiet">
-<div class="q-title">{t("거래복기 준비 중", "Trade Review placeholder")}</div>
-<div class="q-body">{t("앞으로 선택한 거래를 저장하고 진입 이유, 감정 상태, 개선점을 정리할 수 있게 만들 예정입니다.", "Later this tab will let you save selected trades and review entry reason, emotional state, and lessons.")}</div>
+
+    review_items = st.session_state.get("reviews", []) or []
+    if not review_items:
+        st.markdown(
+            f'''<div class="quiet">
+<div class="q-title">{t("아직 복기할 거래가 없습니다", "No trades to review yet")}</div>
+<div class="q-body">{t("거래일지에서 거래를 선택해 보내세요.", "Send trades from Journal.")}</div>
 </div>''',
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
+    else:
+        if "review_notes" not in st.session_state or not isinstance(st.session_state.review_notes, dict):
+            st.session_state.review_notes = {}
+        review_options = [
+            "Risk", "Edge", "Selling timing", "My probability", "Market probability",
+            "Entry rationale", "Exit rationale", "Position size", "Emotion / FOMO",
+            "What I learned", "Mistake / rule violation", "Next action",
+        ]
+        for item in list(review_items):
+            if not isinstance(item, dict):
+                continue
+            rid = item.get("review_id") or make_review_id_from_trade_group(item, item.get("source", "review"))
+            kbase = _review_widget_key("rv", rid)
+            saved = st.session_state.review_notes.get(rid, {}) if isinstance(st.session_state.review_notes, dict) else {}
+            saved_values = saved.get("values", {}) if isinstance(saved.get("values", {}), dict) else {}
+            pnl = item.get("estimated_realized_pnl")
+            pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(safe_trade_float(pnl, 0.0))
+            pnl_cls = "i" if pnl is None else ("pos" if safe_trade_float(pnl, 0.0) >= 0 else "neg")
+            st.markdown(
+                f'''<div class="pf-card" style="margin:14px 0;">
+  <div class="pf-card-head">
+    <div>
+      <div class="pf-title">{esc(item.get("market"))}</div>
+      <div class="pf-sub">{esc(item.get("outcome"))} · {esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
+    </div>
+    <span class="state i">{esc(item.get("latest_dt") or item.get("created_at", ""))}</span>
+  </div>
+  <div class="pf-metrics">
+    <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(safe_trade_float(item.get("avg_buy_price"), 0))}</div></div>
+    <div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(safe_trade_float(item.get("avg_sell_price"), 0)) if safe_trade_float(item.get("sold_shares"), 0) > 0 else "—"}</div></div>
+    <div class="pf-metric"><div class="k">{t("실현손익(추정)", "Realized est.")}</div><div class="v {pnl_cls}">{pnl_text}</div></div>
+    <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining")}</div><div class="v">{safe_trade_float(item.get("remaining_shares"), 0):.2f} · {money(safe_trade_float(item.get("remaining_cost"), 0))}</div></div>
+  </div>
+</div>''',
+                unsafe_allow_html=True,
+            )
+            with st.expander(t("복기 작성", "Write review"), expanded=False):
+                fields = st.multiselect(
+                    t("복기 항목 선택", "Select review fields"),
+                    review_options,
+                    default=saved.get("selected_fields", []),
+                    key=f"{kbase}_fields",
+                )
+                values = {}
+                if "Risk" in fields:
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        risk_default = saved_values.get("risk_level", "Medium")
+                        values["risk_level"] = st.selectbox("Risk", ["Low", "Medium", "High"],
+                                                              index=["Low", "Medium", "High"].index(risk_default) if risk_default in ["Low", "Medium", "High"] else 1,
+                                                              key=f"{kbase}_risk_level")
+                    with c2:
+                        values["risk_note"] = st.text_area(t("리스크 판단 메모", "Risk notes"), value=saved_values.get("risk_note", ""), key=f"{kbase}_risk_note", height=70)
+                if "Edge" in fields:
+                    values["edge_cents"] = st.number_input(t("내가 봤던 Edge(¢)", "Edge I saw (¢)"), value=float(saved_values.get("edge_cents", 0.0)), key=f"{kbase}_edge")
+                    values["edge_note"] = st.text_area(t("왜 저평가라고 봤는가?", "Why did it look mispriced?"), value=saved_values.get("edge_note", ""), key=f"{kbase}_edge_note", height=70)
+                if "Selling timing" in fields:
+                    sell_opts = [t("만기 보유", "Hold to expiry"), t("중간 익절", "Mid take-profit"), t("손절", "Stop-loss"), t("상환/정산 대기", "Wait redemption/settlement"), t("매도 타이밍 놓침", "Missed sell timing")]
+                    values["selling_timing"] = st.selectbox(t("매도 타이밍", "Selling timing"), sell_opts, key=f"{kbase}_sell_timing")
+                    values["target_sell_price"] = st.number_input(t("원했던 매도가(¢)", "Target sell price (¢)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("target_sell_price", 0.0)), key=f"{kbase}_target_sell")
+                    values["selling_note"] = st.text_area(t("실제 매도 판단 메모", "Exit timing notes"), value=saved_values.get("selling_note", ""), key=f"{kbase}_selling_note", height=70)
+                if "My probability" in fields:
+                    values["my_probability"] = st.number_input(t("내가 생각한 실제 확률(%)", "My estimated probability (%)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("my_probability", 0.0)), key=f"{kbase}_my_prob")
+                if "Market probability" in fields:
+                    values["market_probability"] = st.number_input(t("시장이 반영한 확률(%)", "Market implied probability (%)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("market_probability", 0.0)), key=f"{kbase}_mkt_prob")
+                if "Entry rationale" in fields:
+                    values["entry_rationale"] = st.text_area(t("진입 근거", "Entry rationale"), value=saved_values.get("entry_rationale", ""), key=f"{kbase}_entry_reason", height=90)
+                if "Exit rationale" in fields:
+                    values["exit_rationale"] = st.text_area(t("청산/매도 근거", "Exit rationale"), value=saved_values.get("exit_rationale", ""), key=f"{kbase}_exit_reason", height=90)
+                if "Position size" in fields:
+                    values["position_size_note"] = st.text_area(t("포지션 크기 판단", "Position size review"), value=saved_values.get("position_size_note", ""), key=f"{kbase}_size_note", height=70)
+                if "Emotion / FOMO" in fields:
+                    emo_opts = [t("정상", "Normal"), t("약간 감정적", "Slightly emotional"), "FOMO", t("복구 배팅", "Recovery betting"), t("규칙 위반", "Rule violation")]
+                    values["emotion_state"] = st.selectbox(t("감정 상태", "Emotion state"), emo_opts, key=f"{kbase}_emotion")
+                    values["emotion_note"] = st.text_area(t("감정 상태 메모", "Emotion notes"), value=saved_values.get("emotion_note", ""), key=f"{kbase}_emotion_note", height=70)
+                if "What I learned" in fields:
+                    values["lesson"] = st.text_area(t("배운 점", "What I learned"), value=saved_values.get("lesson", ""), key=f"{kbase}_lesson", height=90)
+                if "Mistake / rule violation" in fields:
+                    values["mistake"] = st.text_area(t("실수 또는 규칙 위반", "Mistake or rule violation"), value=saved_values.get("mistake", ""), key=f"{kbase}_mistake", height=90)
+                if "Next action" in fields:
+                    next_opts = [t("다음엔 같은 조건이면 진입", "Enter again under same conditions"), t("다음엔 금액 축소", "Reduce size next time"), t("다음엔 진입하지 않음", "Do not enter next time"), t("정보 확인 후 진입", "Enter only after checking info"), t("규칙 재설정 필요", "Need rule reset")]
+                    values["next_action"] = st.selectbox(t("다음 행동", "Next action"), next_opts, key=f"{kbase}_next_action")
+                    values["next_action_note"] = st.text_area(t("다음 행동 메모", "Next action notes"), value=saved_values.get("next_action_note", ""), key=f"{kbase}_next_note", height=70)
+
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button(t("복기 저장", "Save review"), key=f"{kbase}_save", use_container_width=True):
+                        st.session_state.review_notes[rid] = {
+                            "selected_fields": fields,
+                            "values": values,
+                            "saved_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        }
+                        st.success(t("복기를 저장했습니다.", "Review saved."))
+                with b2:
+                    if st.button(t("복기에서 제거", "Remove from review"), key=f"{kbase}_remove", use_container_width=True):
+                        st.session_state.reviews = [x for x in st.session_state.get("reviews", []) if not isinstance(x, dict) or x.get("review_id") != rid]
+                        if isinstance(st.session_state.get("review_notes"), dict):
+                            st.session_state.review_notes.pop(rid, None)
+                        st.rerun()
 
 
 # =====================================================
