@@ -387,6 +387,220 @@ hr { border: none; border-top: 1px solid var(--hairline); margin: 24px 0; }
   .stat { border-right: none; border-bottom: 1px solid var(--hairline-2); }
   .stat:last-child { border-bottom: none; }
 }
+
+/* =====================================================================
+   Memento — Apple cognitive-minimal design override
+   Philosophy: fewer recognition steps, basic geometry, symmetry, grouping.
+   This section intentionally overrides the legacy visual layer only.
+   ===================================================================== */
+:root {
+  --bg: #f5f5f7;
+  --surface: rgba(255,255,255,.92);
+  --surface-2: #f2f2f4;
+  --surface-3: #fbfbfd;
+  --ink: #1d1d1f;
+  --ink2: #34363d;
+  --gray: #6e6e73;
+  --gray2: #a1a1a6;
+  --hairline: rgba(0,0,0,.08);
+  --hairline-2: rgba(0,0,0,.055);
+  --accent: #0071e3;
+  --accent-press: #0066cc;
+  --accent-soft: #eaf3ff;
+  --green: #12805c; --green-soft:#e8f6ef; --green-soft2:#edf8f2;
+  --amber: #b46a00; --amber-soft:#fff3df;
+  --red: #d43d32; --red-soft:#fff0ee;
+  --radius-s: 12px;
+  --radius-m: 18px;
+  --radius-l: 26px;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.03), 0 8px 24px rgba(0,0,0,.035);
+  --shadow-2: 0 2px 4px rgba(0,0,0,.04), 0 18px 56px rgba(0,0,0,.07);
+}
+
+html, body, .stApp {
+  background:
+    radial-gradient(circle at top left, rgba(0,113,227,.07), transparent 34rem),
+    linear-gradient(180deg, #fbfbfd 0%, var(--bg) 100%) !important;
+}
+
+.block-container {
+  max-width: 1120px;
+  padding-top: 3.6rem !important;
+}
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.masthead .name {
+  font-size: 26px;
+  font-weight: 780;
+  letter-spacing: -.055em;
+}
+.masthead .name::before {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  transform: none;
+  background: var(--accent);
+}
+.masthead .tag, .subline, .footnote { color: var(--gray) !important; }
+.mh-chip {
+  background: rgba(255,255,255,.75);
+  border-color: var(--hairline);
+  color: var(--gray);
+  backdrop-filter: blur(18px);
+}
+
+.headline {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 780;
+  letter-spacing: -.06em;
+  line-height: 1.04;
+  margin-top: 18px;
+}
+.subline {
+  font-size: 15px;
+  max-width: 680px;
+  line-height: 1.65;
+}
+.eyebrow {
+  color: var(--gray) !important;
+  letter-spacing: .11em;
+}
+
+.verdict, .profile-hero, .pf-card, .market-card, .trade-card, .card, .card-lead, .pos-card,
+.ai-report-card, .rc-card, .rc-action, .meter, .spec-row, .quiet, div[data-testid="stExpander"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--radius-l) !important;
+  box-shadow: var(--shadow-1) !important;
+  backdrop-filter: saturate(180%) blur(18px);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+}
+
+.verdict { padding: 26px 28px; }
+.verdict .v-title {
+  font-size: clamp(30px, 4vw, 44px);
+  font-weight: 790;
+  letter-spacing: -.06em;
+}
+.verdict .v-sub { max-width: 760px; }
+
+.stats {
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.stat {
+  padding: 18px 20px;
+}
+.stat .s-value, .pf-big, .profile-cell .v, .trade-card .v, .market-price {
+  letter-spacing: -.05em;
+}
+
+.pf-grid, .market-grid, .ai-report-grid, .rc-grid {
+  gap: 16px;
+}
+.pf-card, .market-card {
+  padding: 20px 22px;
+}
+.pf-metrics, .market-metrics, .profile-grid {
+  gap: 12px;
+}
+
+.spec-row {
+  grid-template-columns: 170px minmax(0,1fr) auto;
+  gap: 16px;
+  margin: 8px 0;
+}
+.spec-val, .line, .rc-note, .ai-block .a-body {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.state, .pill {
+  border-radius: 999px;
+  font-weight: 720;
+}
+.dot {
+  width: 8px; height: 8px;
+}
+
+.meter .m-track { height: 7px; background: #ebebef; }
+.meter .m-fill { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+  background: rgba(255,255,255,.72) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 999px !important;
+  padding: 5px !important;
+  box-shadow: var(--shadow-1);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+div[data-testid="stTabs"] [data-baseweb="tab"] {
+  border-radius: 999px !important;
+  padding: 8px 16px !important;
+}
+div[data-testid="stTabs"] [aria-selected="true"] {
+  background: var(--ink) !important;
+  box-shadow: none !important;
+}
+div[data-testid="stTabs"] [aria-selected="true"] p {
+  color: #fff !important;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+textarea,
+div[data-baseweb="select"] > div {
+  background: rgba(255,255,255,.88) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 16px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), var(--shadow-1) !important;
+}
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stNumberInput"] input:focus,
+textarea:focus {
+  border-color: rgba(0,113,227,.65) !important;
+  box-shadow: 0 0 0 4px rgba(0,113,227,.14) !important;
+}
+
+.stButton > button, .stFormSubmitButton > button {
+  border-radius: 999px !important;
+  min-height: 44px;
+  font-weight: 740 !important;
+  background: var(--accent) !important;
+}
+div[data-testid="stDownloadButton"] > button {
+  border-radius: 999px !important;
+}
+
+/* User-facing tables must compress rather than create horizontal cognition cost. */
+div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+  max-width: 100% !important;
+  border-radius: var(--radius-l) !important;
+}
+div[data-testid="stDataFrame"] * , div[data-testid="stDataEditor"] * {
+  font-size: 12px !important;
+}
+
+/* Grouped cards: one visual family, one recognition pattern. */
+.pf-card-head, .market-head, .profile-hero-head {
+  align-items: flex-start;
+}
+.pf-title, .market-title, .profile-hero .title {
+  font-weight: 760;
+  letter-spacing: -.025em;
+}
+
+@media (max-width: 900px) {
+  .block-container { padding-top: 2.8rem !important; }
+  .spec-row { grid-template-columns: 1fr; }
+  div[data-testid="stTabs"] [data-baseweb="tab-list"] { width: 100%; }
+}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -466,6 +680,7 @@ DEFAULTS = {
     "reviews": [],
     "review_notes": {},
     "entry_self_strategy": {},
+    "self_check_scale": 5,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -535,6 +750,16 @@ def grade_word(kind):
 
 def esc(v):
     return html.escape(str(v or ""), quote=True)
+
+def self_check_scale():
+    try:
+        scale = int(st.session_state.get("self_check_scale", 5) or 5)
+    except Exception:
+        scale = 5
+    return 10 if scale == 10 else 5
+
+def self_check_scale_help():
+    return t("1 = 매우 낮음 · 중간 = 보통 · 최대 = 매우 높음", "1 = very low · middle = normal · max = very high")
 
 
 # =====================================================
@@ -3358,10 +3583,10 @@ def _market_table(rows, section_key):
 
 
 def _selected_entry_form(entry_category, entry_subcategory):
-    """Selected market detailed inputs plus pre-entry self-review fields.
+    """Selected market inputs plus optional Korean self-strategy fields.
 
-    The deterministic engine still runs calculate_entry only. The added section lets
-    the user define their own strategy/rationale before pressing Analyze.
+    Main visible inputs are deterministic only. Optional bookmaker/research/self-check
+    fields appear only when the user selects them in the self-strategy section.
     """
     sel = st.session_state.get("_entry_sel")
     if not sel:
@@ -3379,157 +3604,152 @@ def _selected_entry_form(entry_category, entry_subcategory):
     st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("선택한 시장", "Selected")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="spec-row"><div class="spec-key">{esc(q)}</div><div class="spec-val"><b>{esc(o)}</b> · {cents(disp)}</div><div></div></div>', unsafe_allow_html=True)
 
+    # ---- core deterministic inputs: visible first ----
+    c1, c2 = st.columns(2)
+    with c1:
+        stake = st.number_input(t("투자금($)", "Stake($)"), min_value=1.0, value=float(min(50.0, (effective_bankroll() or 1000.0) * 0.03) or 50.0), key="sel_stake")
+        conf = st.selectbox(t("확신", "Conviction"), confidence_options(), index=2, key="sel_conf")
+        target = st.number_input(t("목표가(¢)", "Target(¢)"), min_value=1.0, max_value=100.0, value=float(min(disp + 10, 99.0)), key="sel_target")
+    with c2:
+        fair = st.number_input(t("적정가(¢)", "Fair(¢)"), min_value=1.0, max_value=99.0, value=float(min(disp + 5, 99.0)), key="sel_fair")
+        purp = st.selectbox(t("목적", "Purpose"), purpose_options(), key="sel_purpose")
+        stop = st.number_input(t("손절가(¢)", "Stop(¢)"), min_value=0.0, max_value=99.0, value=float(max(disp - 10, 1.0)), key="sel_stop")
+
+    # ---- optional self-strategy section ----
+    st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("내 진입 전략 / 자가 판단", "My entry strategy / self-check")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote">{t("앱이 판단하기 전에 스스로 확인할 항목만 선택하세요. 선택하지 않은 항목은 입력창을 숨깁니다.", "Choose only the self-check items you want before the app verdict.")}</div>', unsafe_allow_html=True)
+
     strategy_options = [
-        "Risk",
-        "Edge",
-        "Selling timing",
-        "My probability",
-        "Market probability",
-        "Entry rationale",
-        "Exit rationale",
-        "Position size",
-        "Emotion / FOMO",
-        "What I learned",
-        "Mistake / rule violation",
-        "Next action",
+        "리스크", "엣지", "매도 타이밍", "내가 생각한 확률", "시장이 보는 확률",
+        "진입 근거", "청산/매도 근거", "포지션 크기", "감정/FOMO",
+        "외부배당", "AI 리서치 메모", "배운 점", "실수/규칙 위반", "다음 행동",
     ]
-    default_strategy = ["Risk", "Edge", "Selling timing", "My probability", "Market probability", "Entry rationale"]
+    default_strategy = ["리스크", "엣지", "매도 타이밍", "내가 생각한 확률", "시장이 보는 확률", "진입 근거"]
     selected_strategy_fields = st.multiselect(
-        t("진입 전 자가 판단 항목 선택", "Select pre-entry self-review fields"),
+        "평가할 항목 선택",
         strategy_options,
         default=default_strategy,
         key=f"entry_strategy_fields_{keytok}",
-        help=t("앱 판정 전에 내가 어떤 근거와 전략으로 들어가는지 먼저 정리합니다.", "Define your own logic before the app verdict."),
+        help=t("선택한 항목만 아래에 표시됩니다.", "Only selected fields are shown below."),
     )
 
-    with st.form("sel_entry_form"):
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            stake = st.number_input(t("투자금($)", "Stake($)"), min_value=1.0, value=float(min(50.0, (effective_bankroll() or 1000.0) * 0.03) or 50.0), key="sel_stake")
-        with c2:
-            fair = st.number_input(t("적정가(¢)", "Fair(¢)"), min_value=1.0, max_value=99.0, value=float(min(disp + 5, 99.0)), key="sel_fair")
-        with c3:
-            conf = st.selectbox(t("확신", "Conviction"), confidence_options(), index=2, key="sel_conf")
-        with c4:
-            purp = st.selectbox(t("목적", "Purpose"), purpose_options(), key="sel_purpose")
+    scale = self_check_scale()
+    strategy_payload = {"selected_fields": list(selected_strategy_fields), "rating_scale": scale}
+    bk = 0.0
+    bk_memo = ""
+    ai_memo = ""
 
-        c5, c6 = st.columns(2)
-        with c5:
-            target = st.number_input(t("목표가(¢)", "Target(¢)"), min_value=1.0, max_value=100.0, value=float(min(disp + 10, 99.0)), key="sel_target")
-        with c6:
-            stop = st.number_input(t("손절가(¢)", "Stop(¢)"), min_value=0.0, max_value=99.0, value=float(max(disp - 10, 1.0)), key="sel_stop")
+    if selected_strategy_fields:
 
-        bk = st.number_input(t("외부배당/북메이커 승률(%)", "Bookmaker prob(%)"), min_value=0.0, max_value=99.0, value=0.0, key="sel_book")
-        bk_memo = st.text_input(t("외부배당 출처 메모", "Bookmaker/source memo"), key="sel_bm", placeholder=t("예: Pinnacle T1 -180, Bet365 Gen.G 1.55", "e.g. Pinnacle T1 -180, Bet365 Gen.G 1.55"))
-
-        st.markdown(f'<div class="eyebrow" style="margin-top:18px;">{t("내 진입 전략 / 자가 판단", "My entry strategy / self-review")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="footnote">{t("아래 항목은 앱이 판단하기 전에 스스로 세우는 전략 기록입니다. 선택한 항목만 입력하세요.", "These fields record your own thinking before the app verdict. Fill only the selected items.")}</div>', unsafe_allow_html=True)
-
-        strategy_payload = {"selected_fields": list(selected_strategy_fields)}
-
-        if "Risk" in selected_strategy_fields:
+        if "리스크" in selected_strategy_fields:
             r1, r2 = st.columns([1, 2])
             with r1:
-                strategy_payload["risk_level"] = st.selectbox(t("Risk 판단", "Risk view"), [t("낮음", "Low"), t("중간", "Medium"), t("높음", "High")], index=1, key=f"entry_risk_level_{keytok}")
+                strategy_payload["risk_score"] = st.slider("리스크 점수", 1, scale, max(1, min(scale, (scale + 1) // 2)), key=f"entry_risk_score_{keytok}", help=self_check_scale_help())
             with r2:
-                strategy_payload["risk_note"] = st.text_input(t("리스크 판단 메모", "Risk notes"), key=f"entry_risk_note_{keytok}", placeholder=t("예: 85¢ 이상 고가 진입, 상환까지 수익 제한", "e.g. high-price entry above 85¢, limited upside to redemption"))
+                strategy_payload["risk_note"] = st.text_area("리스크 판단 메모", key=f"entry_risk_note_{keytok}", height=70, placeholder="고가 진입, 변동성, 정산 리스크, 손실 가능성 등")
 
-        if "Edge" in selected_strategy_fields:
+        if "엣지" in selected_strategy_fields:
             e1, e2 = st.columns([1, 2])
             with e1:
-                strategy_payload["self_edge_cents"] = st.number_input(t("내가 본 Edge(¢)", "My edge (¢)"), min_value=-99.0, max_value=99.0, value=float(round(min(disp + 5, 99.0) - disp, 1)), step=0.5, key=f"entry_self_edge_{keytok}")
+                strategy_payload["self_edge_cents"] = st.number_input("내가 본 엣지(¢)", min_value=-99.0, max_value=99.0, value=float(round(fair - disp, 1)), step=0.5, key=f"entry_self_edge_{keytok}")
             with e2:
-                strategy_payload["edge_note"] = st.text_input(t("왜 저평가라고 봤는가?", "Why is this mispriced?"), key=f"entry_edge_note_{keytok}", placeholder=t("시장 가격보다 높게 보는 핵심 근거", "Main reason you think fair value is above market"))
+                strategy_payload["edge_note"] = st.text_area("왜 저평가라고 봤는가?", key=f"entry_edge_note_{keytok}", height=70, placeholder="시장 가격보다 높게 보는 핵심 근거")
 
-        if "Selling timing" in selected_strategy_fields:
+        if "매도 타이밍" in selected_strategy_fields:
             s1, s2 = st.columns([1, 1])
             with s1:
-                strategy_payload["selling_plan"] = st.selectbox(
-                    t("매도 전략", "Selling plan"),
-                    [t("만기 보유", "Hold to expiry"), t("중간 익절", "Mid-trade take-profit"), t("손절", "Stop-loss"), t("상환/정산 대기", "Wait for redemption/settlement"), t("매도 타이밍 미정", "Exit timing undecided")],
-                    key=f"entry_selling_plan_{keytok}",
-                )
+                strategy_payload["selling_plan"] = st.selectbox("매도 전략", ["만기 보유", "중간 익절", "손절", "상환/정산 대기", "매도 타이밍 놓침"], key=f"entry_selling_plan_{keytok}")
             with s2:
-                strategy_payload["desired_sell_price"] = st.number_input(t("원하는 매도가(¢)", "Desired sell price (¢)"), min_value=0.0, max_value=100.0, value=float(min(disp + 10, 99.0)), step=0.5, key=f"entry_desired_sell_{keytok}")
-            strategy_payload["selling_note"] = st.text_input(t("매도 타이밍 메모", "Selling timing notes"), key=f"entry_selling_note_{keytok}", placeholder=t("예: 92¢ 도달 시 절반 익절, 80¢ 이탈 시 재평가", "e.g. sell half at 92¢, re-check below 80¢"))
+                strategy_payload["desired_sell_price"] = st.number_input("원하는 매도가(¢)", min_value=0.0, max_value=100.0, value=float(min(disp + 10, 99.0)), step=0.5, key=f"entry_desired_sell_{keytok}")
+            strategy_payload["selling_note"] = st.text_area("매도 타이밍 판단 메모", key=f"entry_selling_note_{keytok}", height=70, placeholder="예: 92¢ 도달 시 절반 익절, 80¢ 이탈 시 재평가")
 
-        if "My probability" in selected_strategy_fields or "Market probability" in selected_strategy_fields:
+        if "내가 생각한 확률" in selected_strategy_fields or "시장이 보는 확률" in selected_strategy_fields:
             pcols = st.columns(2)
-            if "My probability" in selected_strategy_fields:
+            if "내가 생각한 확률" in selected_strategy_fields:
                 with pcols[0]:
-                    strategy_payload["my_probability"] = st.number_input(t("내가 생각한 실제 확률(%)", "My estimated probability (%)"), min_value=0.0, max_value=100.0, value=float(min(disp + 5, 99.0)), step=0.5, key=f"entry_my_prob_{keytok}")
-            if "Market probability" in selected_strategy_fields:
+                    strategy_payload["my_probability"] = st.number_input("내가 생각한 실제 확률(%)", min_value=0.0, max_value=100.0, value=float(min(fair, 99.0)), step=0.5, key=f"entry_my_prob_{keytok}")
+            if "시장이 보는 확률" in selected_strategy_fields:
                 with pcols[1]:
-                    strategy_payload["market_probability"] = st.number_input(t("시장이 반영한 확률(%)", "Market implied probability (%)"), min_value=0.0, max_value=100.0, value=float(disp), step=0.5, key=f"entry_market_prob_{keytok}")
+                    strategy_payload["market_probability"] = st.number_input("시장이 반영한 확률(%)", min_value=0.0, max_value=100.0, value=float(disp), step=0.5, key=f"entry_market_prob_{keytok}")
 
-        if "Entry rationale" in selected_strategy_fields:
-            strategy_payload["entry_rationale"] = st.text_area(t("진입 근거", "Entry rationale"), key=f"entry_rationale_{keytok}", height=72, placeholder=t("내가 이 포지션에 들어가려는 핵심 근거", "Why I want to enter this position"))
+        if "진입 근거" in selected_strategy_fields:
+            strategy_payload["entry_rationale"] = st.text_area("진입 근거", key=f"entry_rationale_{keytok}", height=80, placeholder="내가 이 포지션에 들어가려는 핵심 근거")
 
-        if "Exit rationale" in selected_strategy_fields:
-            strategy_payload["exit_rationale"] = st.text_area(t("청산/매도 근거", "Exit rationale"), key=f"entry_exit_rationale_{keytok}", height=68, placeholder=t("어떤 조건이면 팔거나 보유할지", "What would make me sell or hold"))
+        if "청산/매도 근거" in selected_strategy_fields:
+            strategy_payload["exit_rationale"] = st.text_area("청산/매도 근거", key=f"entry_exit_rationale_{keytok}", height=70, placeholder="어떤 조건이면 팔거나 보유할지")
 
-        if "Position size" in selected_strategy_fields:
-            strategy_payload["position_size_note"] = st.text_input(t("포지션 크기 판단", "Position size rationale"), key=f"entry_pos_size_note_{keytok}", placeholder=t("$30로 제한하는 이유, 추가진입 금지 조건 등", "Why this stake size, no-add rules, etc."))
+        if "포지션 크기" in selected_strategy_fields:
+            strategy_payload["position_size_note"] = st.text_area("포지션 크기 판단", key=f"entry_pos_size_note_{keytok}", height=70, placeholder="$30로 제한하는 이유, 추가진입 금지 조건 등")
 
-        if "Emotion / FOMO" in selected_strategy_fields:
+        if "감정/FOMO" in selected_strategy_fields:
             emo1, emo2 = st.columns([1, 2])
             with emo1:
-                strategy_payload["emotion_state"] = st.selectbox(t("감정 상태", "Emotion state"), [t("정상", "Normal"), t("약간 감정적", "Slightly emotional"), "FOMO", t("복구 배팅", "Recovery betting"), t("규칙 위반 위험", "Rule violation risk")], key=f"entry_emotion_state_{keytok}")
+                strategy_payload["emotion_score"] = st.slider("감정/FOMO 점수", 1, scale, 1, key=f"entry_emotion_score_{keytok}", help=self_check_scale_help())
             with emo2:
-                strategy_payload["emotion_note"] = st.text_input(t("감정 메모", "Emotion note"), key=f"entry_emotion_note_{keytok}", placeholder=t("왜 지금 들어가고 싶은지, 충동 여부", "Why I want to enter now; impulse check"))
+                strategy_payload["emotion_note"] = st.text_area("감정 상태 메모", key=f"entry_emotion_note_{keytok}", height=70, placeholder="충동, 복구심리, FOMO, 규칙 위반 가능성")
 
-        if "What I learned" in selected_strategy_fields:
-            strategy_payload["lesson_note"] = st.text_area(t("이번 진입에서 배울 점", "What I want to learn"), key=f"entry_lesson_{keytok}", height=60)
+        if "외부배당" in selected_strategy_fields:
+            b1, b2 = st.columns([1, 2])
+            with b1:
+                bk = st.number_input("외부배당/북메이커 승률(%)", min_value=0.0, max_value=99.0, value=0.0, key="sel_book")
+            with b2:
+                bk_memo = st.text_input("외부배당 출처 메모", key="sel_bm", placeholder="예: Pinnacle T1 -180, Bet365 Gen.G 1.55")
+            strategy_payload["bookmaker_prob"] = bk
+            strategy_payload["bookmaker_memo"] = bk_memo
 
-        if "Mistake / rule violation" in selected_strategy_fields:
-            strategy_payload["mistake_note"] = st.text_area(t("예상되는 실수 / 규칙 위반", "Possible mistake / rule violation"), key=f"entry_mistake_{keytok}", height=60)
+        if "AI 리서치 메모" in selected_strategy_fields:
+            ai_memo = st.text_area("AI 리서치 메모 / 외부정보", key="sel_ai_memo", height=84, placeholder="최근 10경기·상대전적·순위·라인업·부상·뉴스 링크 붙여넣기")
+            strategy_payload["ai_memo"] = ai_memo
 
-        if "Next action" in selected_strategy_fields:
-            strategy_payload["next_action"] = st.selectbox(
-                t("다음 행동 계획", "Next action plan"),
-                [t("조건 충족 시 진입", "Enter if conditions hold"), t("가격 개선 시 진입", "Enter only at better price"), t("정보 확인 후 진입", "Verify info first"), t("진입하지 않음", "Do not enter"), t("금액 축소", "Reduce stake")],
-                key=f"entry_next_action_{keytok}",
-            )
-            strategy_payload["next_action_note"] = st.text_input(t("다음 행동 메모", "Next action note"), key=f"entry_next_note_{keytok}")
+        if "배운 점" in selected_strategy_fields:
+            strategy_payload["lesson_note"] = st.text_area("배운 점", key=f"entry_lesson_{keytok}", height=60)
 
-        ai_memo = st.text_area(t("AI 리서치 메모 / 외부정보", "AI research memo / external info"), key="sel_ai_memo", height=84,
-                               placeholder=t("최근 10경기·상대전적·순위·라인업·부상·뉴스 링크 붙여넣기", "recent 10, h2h, standings, lineup, injuries, news links"))
+        if "실수/규칙 위반" in selected_strategy_fields:
+            strategy_payload["mistake_note"] = st.text_area("실수 또는 규칙 위반", key=f"entry_mistake_{keytok}", height=60)
 
-        with st.expander(t("고급 (감정·중복노출)", "Advanced (emotion · duplicate exposure)")):
-            a1, a2 = st.columns(2)
-            with a1:
-                fomo = st.slider(t("감정 체크", "Emotion check"), 0, 7, 0, key="sel_fomo")
-                prev_good = st.number_input(t("처음 봤던 좋은 가격(¢)", "Previous good price (¢)"), min_value=0.0, max_value=99.0, value=0.0, key="sel_prev_good")
-            with a2:
-                dup_ml = st.number_input(t("중복 Moneyline 노출($)", "Duplicate ML exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_ml")
-                dup_game = st.number_input(t("중복 Game/Map 노출($)", "Duplicate game/map exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_game")
-                dup_side = st.number_input(t("같은 방향 총 노출($)", "Same-side exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_side")
+        if "다음 행동" in selected_strategy_fields:
+            strategy_payload["next_action"] = st.selectbox("다음 행동", ["다음엔 같은 조건이면 진입", "다음엔 금액 축소", "다음엔 진입하지 않음", "정보 확인 후 진입", "규칙 재설정 필요"], key=f"entry_next_action_{keytok}")
+            strategy_payload["next_action_note"] = st.text_area("다음 행동 메모", key=f"entry_next_note_{keytok}", height=60)
 
-        go = st.form_submit_button(t("분석", "Analyze"), use_container_width=True)
+
+    with st.expander(t("고급 (감정·중복노출)", "Advanced (emotion · duplicate exposure)")):
+        a1, a2 = st.columns(2)
+        with a1:
+            fomo = st.slider(t("감정 체크", "Emotion check"), 0, 7, 0, key="sel_fomo")
+            prev_good = st.number_input(t("처음 봤던 좋은 가격(¢)", "Previous good price (¢)"), min_value=0.0, max_value=99.0, value=0.0, key="sel_prev_good")
+        with a2:
+            dup_ml = st.number_input(t("중복 Moneyline 노출($)", "Duplicate ML exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_ml")
+            dup_game = st.number_input(t("중복 Game/Map 노출($)", "Duplicate game/map exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_game")
+            dup_side = st.number_input(t("같은 방향 총 노출($)", "Same-side exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_side")
+
+    go = st.button(t("분석", "Analyze"), key=f"sel_entry_analyze_{keytok}", use_container_width=True)
 
     def _strategy_context_text(payload):
         if not isinstance(payload, dict) or not payload.get("selected_fields"):
             return ""
-        lines = [t("[진입 전 자가 판단]", "[Pre-entry self-review]")]
+        lines = [t("[진입 전 자가 판단]", "[Pre-entry self-check]")]
         mapping = {
-            "risk_level": t("Risk", "Risk"),
-            "risk_note": t("Risk 메모", "Risk note"),
-            "self_edge_cents": "Edge(¢)",
-            "edge_note": t("Edge 근거", "Edge rationale"),
-            "selling_plan": t("매도 전략", "Selling plan"),
-            "desired_sell_price": t("원하는 매도가", "Desired sell price"),
-            "selling_note": t("매도 메모", "Selling note"),
-            "my_probability": t("내 확률", "My probability"),
-            "market_probability": t("시장 확률", "Market probability"),
-            "entry_rationale": t("진입 근거", "Entry rationale"),
-            "exit_rationale": t("청산 근거", "Exit rationale"),
-            "position_size_note": t("포지션 크기", "Position size"),
-            "emotion_state": t("감정 상태", "Emotion state"),
-            "emotion_note": t("감정 메모", "Emotion note"),
-            "lesson_note": t("배울 점", "Lesson"),
-            "mistake_note": t("실수/규칙 위반", "Mistake/rule violation"),
-            "next_action": t("다음 행동", "Next action"),
-            "next_action_note": t("다음 행동 메모", "Next action note"),
+            "risk_score": "리스크 점수",
+            "risk_note": "리스크 메모",
+            "self_edge_cents": "엣지(¢)",
+            "edge_note": "엣지 근거",
+            "selling_plan": "매도 전략",
+            "desired_sell_price": "원하는 매도가",
+            "selling_note": "매도 타이밍 메모",
+            "my_probability": "내가 생각한 확률",
+            "market_probability": "시장이 보는 확률",
+            "entry_rationale": "진입 근거",
+            "exit_rationale": "청산/매도 근거",
+            "position_size_note": "포지션 크기",
+            "emotion_score": "감정/FOMO 점수",
+            "emotion_note": "감정 메모",
+            "bookmaker_prob": "외부배당 승률",
+            "bookmaker_memo": "외부배당 메모",
+            "ai_memo": "AI 리서치 메모",
+            "lesson_note": "배운 점",
+            "mistake_note": "실수/규칙 위반",
+            "next_action": "다음 행동",
+            "next_action_note": "다음 행동 메모",
         }
         for k, label in mapping.items():
             v = payload.get(k)
@@ -3565,9 +3785,10 @@ def _selected_entry_form(entry_category, entry_subcategory):
             render_live_price_panel(st.session_state.watching_market)
         if st.button(t("AI 분석 탭으로 보내기", "Send to AI tab"), key=f"toai_{keytok}", use_container_width=True):
             r = st.session_state.last_entry
-            memo_for_ai = str(st.session_state.get("sel_ai_memo", "") or "")
-            bk_for_ai = str(st.session_state.get("sel_bm", "") or "")
-            strategy_for_ai = _strategy_context_text(st.session_state.get("entry_self_strategy", {}).get(keytok, {}))
+            saved_strategy = st.session_state.get("entry_self_strategy", {}).get(keytok, {})
+            memo_for_ai = str(saved_strategy.get("ai_memo", "") or "")
+            bk_for_ai = str(saved_strategy.get("bookmaker_memo", "") or "")
+            strategy_for_ai = _strategy_context_text(saved_strategy)
             if strategy_for_ai:
                 memo_for_ai = (memo_for_ai + "\n\n" + strategy_for_ai).strip()
             st.session_state.ai_pending = {
@@ -3580,10 +3801,10 @@ def _selected_entry_form(entry_category, entry_subcategory):
                 "edge": r.get("edge", 0.0),
                 "category": entry_category,
                 "subcategory": entry_subcategory,
-                "bookmaker_prob": float(st.session_state.get("sel_book", 0.0) or 0.0),
+                "bookmaker_prob": float(saved_strategy.get("bookmaker_prob", 0.0) or 0.0),
                 "bookmaker_memo": bk_for_ai,
                 "ai_memo": memo_for_ai,
-                "self_strategy": st.session_state.get("entry_self_strategy", {}).get(keytok, {}),
+                "self_strategy": saved_strategy,
                 "resolution": str(sel.get("resolution", "") or ""),
                 "end_date": str(sel.get("endDate", "") or ""),
                 "source_url": st.session_state.get("entry_url", ""),
@@ -3896,9 +4117,9 @@ with tab_review:
         if "review_notes" not in st.session_state or not isinstance(st.session_state.review_notes, dict):
             st.session_state.review_notes = {}
         review_options = [
-            "Risk", "Edge", "Selling timing", "My probability", "Market probability",
-            "Entry rationale", "Exit rationale", "Position size", "Emotion / FOMO",
-            "What I learned", "Mistake / rule violation", "Next action",
+            "리스크", "엣지", "매도 타이밍", "내가 생각한 확률", "시장이 보는 확률",
+            "진입 근거", "청산/매도 근거", "포지션 크기", "감정/FOMO",
+            "배운 점", "실수/규칙 위반", "다음 행동",
         ]
         for item in list(review_items):
             if not isinstance(item, dict):
@@ -3936,42 +4157,40 @@ with tab_review:
                     key=f"{kbase}_fields",
                 )
                 values = {}
-                if "Risk" in fields:
+                if "리스크" in fields:
                     c1, c2 = st.columns([1, 2])
                     with c1:
-                        risk_default = saved_values.get("risk_level", "Medium")
-                        values["risk_level"] = st.selectbox("Risk", ["Low", "Medium", "High"],
-                                                              index=["Low", "Medium", "High"].index(risk_default) if risk_default in ["Low", "Medium", "High"] else 1,
-                                                              key=f"{kbase}_risk_level")
+                        scale = self_check_scale()
+                        values["risk_score"] = st.slider("리스크 점수", 1, scale, int(saved_values.get("risk_score", max(1, min(scale, (scale + 1) // 2))) or 1), key=f"{kbase}_risk_score", help=self_check_scale_help())
                     with c2:
                         values["risk_note"] = st.text_area(t("리스크 판단 메모", "Risk notes"), value=saved_values.get("risk_note", ""), key=f"{kbase}_risk_note", height=70)
-                if "Edge" in fields:
+                if "엣지" in fields:
                     values["edge_cents"] = st.number_input(t("내가 봤던 Edge(¢)", "Edge I saw (¢)"), value=float(saved_values.get("edge_cents", 0.0)), key=f"{kbase}_edge")
                     values["edge_note"] = st.text_area(t("왜 저평가라고 봤는가?", "Why did it look mispriced?"), value=saved_values.get("edge_note", ""), key=f"{kbase}_edge_note", height=70)
-                if "Selling timing" in fields:
+                if "매도 타이밍" in fields:
                     sell_opts = [t("만기 보유", "Hold to expiry"), t("중간 익절", "Mid take-profit"), t("손절", "Stop-loss"), t("상환/정산 대기", "Wait redemption/settlement"), t("매도 타이밍 놓침", "Missed sell timing")]
                     values["selling_timing"] = st.selectbox(t("매도 타이밍", "Selling timing"), sell_opts, key=f"{kbase}_sell_timing")
                     values["target_sell_price"] = st.number_input(t("원했던 매도가(¢)", "Target sell price (¢)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("target_sell_price", 0.0)), key=f"{kbase}_target_sell")
                     values["selling_note"] = st.text_area(t("실제 매도 판단 메모", "Exit timing notes"), value=saved_values.get("selling_note", ""), key=f"{kbase}_selling_note", height=70)
-                if "My probability" in fields:
+                if "내가 생각한 확률" in fields:
                     values["my_probability"] = st.number_input(t("내가 생각한 실제 확률(%)", "My estimated probability (%)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("my_probability", 0.0)), key=f"{kbase}_my_prob")
-                if "Market probability" in fields:
+                if "시장이 보는 확률" in fields:
                     values["market_probability"] = st.number_input(t("시장이 반영한 확률(%)", "Market implied probability (%)"), min_value=0.0, max_value=100.0, value=float(saved_values.get("market_probability", 0.0)), key=f"{kbase}_mkt_prob")
-                if "Entry rationale" in fields:
+                if "진입 근거" in fields:
                     values["entry_rationale"] = st.text_area(t("진입 근거", "Entry rationale"), value=saved_values.get("entry_rationale", ""), key=f"{kbase}_entry_reason", height=90)
-                if "Exit rationale" in fields:
+                if "청산/매도 근거" in fields:
                     values["exit_rationale"] = st.text_area(t("청산/매도 근거", "Exit rationale"), value=saved_values.get("exit_rationale", ""), key=f"{kbase}_exit_reason", height=90)
-                if "Position size" in fields:
+                if "포지션 크기" in fields:
                     values["position_size_note"] = st.text_area(t("포지션 크기 판단", "Position size review"), value=saved_values.get("position_size_note", ""), key=f"{kbase}_size_note", height=70)
-                if "Emotion / FOMO" in fields:
-                    emo_opts = [t("정상", "Normal"), t("약간 감정적", "Slightly emotional"), "FOMO", t("복구 배팅", "Recovery betting"), t("규칙 위반", "Rule violation")]
-                    values["emotion_state"] = st.selectbox(t("감정 상태", "Emotion state"), emo_opts, key=f"{kbase}_emotion")
+                if "감정/FOMO" in fields:
+                    scale = self_check_scale()
+                    values["emotion_score"] = st.slider("감정/FOMO 점수", 1, scale, int(saved_values.get("emotion_score", 1) or 1), key=f"{kbase}_emotion_score", help=self_check_scale_help())
                     values["emotion_note"] = st.text_area(t("감정 상태 메모", "Emotion notes"), value=saved_values.get("emotion_note", ""), key=f"{kbase}_emotion_note", height=70)
-                if "What I learned" in fields:
+                if "배운 점" in fields:
                     values["lesson"] = st.text_area(t("배운 점", "What I learned"), value=saved_values.get("lesson", ""), key=f"{kbase}_lesson", height=90)
-                if "Mistake / rule violation" in fields:
+                if "실수/규칙 위반" in fields:
                     values["mistake"] = st.text_area(t("실수 또는 규칙 위반", "Mistake or rule violation"), value=saved_values.get("mistake", ""), key=f"{kbase}_mistake", height=90)
-                if "Next action" in fields:
+                if "다음 행동" in fields:
                     next_opts = [t("다음엔 같은 조건이면 진입", "Enter again under same conditions"), t("다음엔 금액 축소", "Reduce size next time"), t("다음엔 진입하지 않음", "Do not enter next time"), t("정보 확인 후 진입", "Enter only after checking info"), t("규칙 재설정 필요", "Need rule reset")]
                     values["next_action"] = st.selectbox(t("다음 행동", "Next action"), next_opts, key=f"{kbase}_next_action")
                     values["next_action_note"] = st.text_area(t("다음 행동 메모", "Next action notes"), value=saved_values.get("next_action_note", ""), key=f"{kbase}_next_note", height=70)
@@ -4347,6 +4566,18 @@ with tab_set:
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # ---- self-check settings ----
+    st.markdown(f'<div class="eyebrow">{t("자가평가 설정", "Self-check settings")}</div>', unsafe_allow_html=True)
+    _scale_labels = {t("5단계", "5-step"): 5, t("10단계", "10-step"): 10}
+    _current_scale = self_check_scale()
+    _scale_keys = list(_scale_labels.keys())
+    _scale_index = 1 if _current_scale == 10 else 0
+    _selected_scale_label = st.selectbox(t("자가평가 점수 단계", "Self-check rating scale"), _scale_keys, index=_scale_index, key="self_check_scale_widget")
+    st.session_state.self_check_scale = _scale_labels.get(_selected_scale_label, 5)
+    st.markdown(f'<div class="footnote">{t("5단계: 1 매우 낮음 · 3 보통 · 5 매우 높음 / 10단계: 1 매우 낮음 · 10 매우 높음", "5-step: 1 very low · 3 normal · 5 very high / 10-step: 1 very low · 10 very high")}</div>', unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
     # ---- risk profile ----
     st.markdown(f'<div class="eyebrow">{t("내 리스크 프로필", "My risk profile")}</div>', unsafe_allow_html=True)
     with st.form("profile_form"):
@@ -4416,7 +4647,10 @@ with tab_set:
                   "prefill_entry": st.session_state.prefill_entry,
                   "dev_mode": st.session_state.dev_mode,
                   "adj_month": st.session_state.adj_month, "adj_year": st.session_state.adj_year,
-                  "reviews": st.session_state.reviews}
+                  "reviews": st.session_state.reviews,
+                  "review_notes": st.session_state.get("review_notes", {}),
+                  "entry_self_strategy": st.session_state.get("entry_self_strategy", {}),
+                  "self_check_scale": st.session_state.get("self_check_scale", 5)}
         st.download_button(t("백업 내려받기 (JSON)", "Download backup (JSON)"),
                            data=json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8"),
                            file_name="memento_backup.json", mime="application/json", use_container_width=True)
@@ -4442,6 +4676,9 @@ with tab_set:
                 st.session_state.adj_month = float(data.get("adj_month", 0))
                 st.session_state.adj_year = float(data.get("adj_year", 0))
                 st.session_state.reviews = data.get("reviews", [])
+                st.session_state.review_notes = data.get("review_notes", st.session_state.get("review_notes", {}))
+                st.session_state.entry_self_strategy = data.get("entry_self_strategy", st.session_state.get("entry_self_strategy", {}))
+                st.session_state.self_check_scale = int(data.get("self_check_scale", st.session_state.get("self_check_scale", 5)) or 5)
                 st.toast(t("복원했습니다", "Restored"))
                 st.rerun()
             except Exception:
