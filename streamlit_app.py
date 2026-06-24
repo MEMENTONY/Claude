@@ -3034,7 +3034,10 @@ def group_auto_trades_for_pnl(auto_trades):
 
 def _norm_trade_text(v):
     '''Normalize market/outcome text for settlement-event matching.'''
-    s = re.sub(r"\s+", " ", str(v or "").strip().lower())
+    s = str(v or "")
+    s = re.sub(r"\[([^\]]+)\]\(https?://[^)\s]+\)", r"\1", s)
+    s = re.sub(r"^icon\s+for\s+", "", s, flags=re.I).strip()
+    s = re.sub(r"\s+", " ", s.strip().lower())
     return "".join(ch for ch in s if ch.isalnum())
 
 
@@ -3068,10 +3071,8 @@ def _match_event_to_group(ev, rows):
     ev_shares = safe_trade_float(ev.get("shares"), 0.0)
     candidates = []
     for r in rows:
-        if r.get("_adjusted"):
-            continue
         remaining = safe_trade_float(r.get("remaining_shares"), 0.0)
-        if remaining <= 1e-6:
+        if remaining <= 1e-6 and not r.get("_adjusted"):
             continue
         r_market = _norm_trade_text(r.get("market"))
         r_outcome = _norm_trade_text(r.get("outcome"))
@@ -3085,9 +3086,11 @@ def _match_event_to_group(ev, rows):
         if ev_outcome and r_outcome and ev_outcome == r_outcome:
             score += 30
         if ev_shares > 0:
-            tolerance = max(0.25, remaining * 0.03)
-            diff = abs(ev_shares - remaining)
-            if diff <= tolerance:
+            share_basis = max(remaining, safe_trade_float(r.get("bought_shares"), 0.0))
+            tolerance = max(0.25, share_basis * 0.03)
+            remaining_tolerance = max(0.25, remaining * 0.03)
+            diff = min(abs(ev_shares - share_basis), abs(ev_shares - remaining))
+            if (remaining > 0 and abs(ev_shares - remaining) <= remaining_tolerance) or diff <= tolerance or remaining <= 1e-6:
                 score += 50
             else:
                 score -= min(45, diff)
@@ -3109,7 +3112,17 @@ def link_settlement_events_to_trade_groups(rows, events):
         if isinstance(ev, dict):
             ev.pop("_linked_to", None)
             ev.pop("_linked_note", None)
-    for ev in events:
+
+    def _event_link_sort(ev):
+        kind = _event_kind(ev) if isinstance(ev, dict) else "event"
+        amount = _parse_event_amount(ev.get("amount")) if isinstance(ev, dict) else None
+        dt = parse_trade_datetime(ev) if isinstance(ev, dict) else None
+        # Cash settlement/redeem rows should establish recovered value before
+        # dust loss rows from the same settled market are applied.
+        priority = 0 if amount is not None and kind in ("redeem", "settled") else 1 if kind == "loss" else 2
+        return (priority, -(dt.timestamp() if dt else 0.0))
+
+    for ev in sorted([x for x in events if isinstance(x, dict)], key=_event_link_sort):
         if not isinstance(ev, dict):
             continue
         kind = _event_kind(ev)
@@ -3120,28 +3133,37 @@ def link_settlement_events_to_trade_groups(rows, events):
             continue
         event_amount = _parse_event_amount(ev.get("amount"))
         buy_cost = safe_trade_float(match.get("buy_cost"), 0.0)
-        proceeds = safe_trade_float(match.get("sell_proceeds"), 0.0)
+        base_proceeds = safe_trade_float(match.get("sell_proceeds"), 0.0)
+        current_effective = safe_trade_float(match.get("adjusted_effective_proceeds"), base_proceeds)
         if kind == "loss":
-            status = t("손실 정산됨", "Settled as loss")
             note = t("손실 이벤트 자동 연결됨", "Loss event auto-linked")
-            adjusted_pnl = proceeds - buy_cost
-            effective_proceeds = proceeds
+            effective_proceeds = current_effective
         elif kind == "redeem":
-            status = t("상환/수익 정산됨", "Redeemed / settled")
             note = t("상환/수익 이벤트 자동 연결됨", "Redemption/profit event auto-linked")
-            adjusted_pnl = None if event_amount is None else proceeds + event_amount - buy_cost
-            effective_proceeds = proceeds + (event_amount or 0.0)
+            effective_proceeds = current_effective + (event_amount or 0.0)
         else:
-            status = t("정산됨", "Settled")
             note = t("정산 이벤트 자동 연결됨", "Settlement event auto-linked")
-            adjusted_pnl = None if event_amount is None else proceeds + event_amount - buy_cost
-            effective_proceeds = proceeds + (event_amount or 0.0)
-        sold_shares = safe_trade_float(match.get("sold_shares"), 0.0)
-        remaining_shares = safe_trade_float(match.get("remaining_shares"), 0.0)
-        event_shares = safe_trade_float(ev.get("shares"), 0.0)
-        event_close_shares = min(remaining_shares, event_shares) if event_shares > 0 else remaining_shares
-        adjusted_sold_shares = sold_shares + max(event_close_shares, 0.0)
+            effective_proceeds = current_effective + (event_amount or 0.0)
+
+        raw_event_shares = ev.get("shares")
+        event_shares = safe_trade_float(raw_event_shares, 0.0)
+        current_closed = safe_trade_float(match.get("adjusted_sold_shares"), safe_trade_float(match.get("sold_shares"), 0.0))
+        current_remaining = safe_trade_float(match.get("adjusted_remaining_shares"), safe_trade_float(match.get("remaining_shares"), 0.0))
+        if raw_event_shares is None:
+            # Redemption rows often omit shares; they still settle the remaining position.
+            event_close_shares = current_remaining
+        elif event_shares <= 0:
+            # Polymarket can emit a 0.0-share loss row for sub-1-share dust after redemption.
+            # Link it for audit visibility, but never let it close or overwrite the real payout.
+            event_close_shares = 0.0
+            if kind == "loss":
+                note = t("1주 미만 잔여 손실 이벤트 자동 연결됨", "Sub-1-share dust loss auto-linked")
+        else:
+            event_close_shares = min(current_remaining, event_shares)
+        adjusted_sold_shares = current_closed + max(event_close_shares, 0.0)
+        adjusted_remaining_shares = max(current_remaining - max(event_close_shares, 0.0), 0.0)
         adjusted_avg_exit = (effective_proceeds / adjusted_sold_shares * 100.0) if adjusted_sold_shares > 0 else 0.0
+        adjusted_pnl = effective_proceeds - buy_cost
         event_dt = parse_trade_datetime(ev)
         latest_dt = parse_trade_datetime({"d": match.get("latest_dt")}) if match.get("latest_dt") else None
         display_latest_dt = match.get("latest_dt", "")
@@ -3149,13 +3171,27 @@ def link_settlement_events_to_trade_groups(rows, events):
         if event_dt is not None and (latest_dt is None or event_dt > latest_dt):
             display_latest_dt = event_dt.isoformat(timespec="minutes")
             latest_ts = event_dt.timestamp()
+        linked_kinds = set(str(match.get("linked_event_type", "") or "").split("+")) - {""}
+        linked_kinds.add(kind)
+        if "redeem" in linked_kinds or (effective_proceeds > base_proceeds and effective_proceeds > 0):
+            status = t("상환/수익 정산됨", "Redeemed / settled")
+        elif "settled" in linked_kinds:
+            status = t("정산됨", "Settled")
+        else:
+            status = t("손실 정산됨", "Settled as loss")
+        prior_note = str(match.get("linked_event_note", "") or "")
+        linked_note = f"{prior_note} · {note}" if prior_note and note not in prior_note else (prior_note or note)
+        prior_amount = match.get("linked_event_amount")
+        linked_amount = (safe_trade_float(prior_amount, 0.0) if prior_amount is not None else 0.0) + (event_amount or 0.0)
+        prior_shares = safe_trade_float(match.get("linked_event_shares"), 0.0)
+        linked_shares = prior_shares + max(event_close_shares, 0.0)
         match.update({
             "_adjusted": True,
-            "linked_event_type": kind,
-            "linked_event_amount": event_amount,
-            "linked_event_shares": ev.get("shares"),
-            "linked_event_time": ev.get("d"),
-            "linked_event_note": note,
+            "linked_event_type": "+".join(sorted(linked_kinds)),
+            "linked_event_amount": round(linked_amount, 2) if linked_amount else None,
+            "linked_event_shares": round(linked_shares, 4) if linked_shares else None,
+            "linked_event_time": display_latest_dt,
+            "linked_event_note": linked_note,
             "latest_dt": display_latest_dt,
             "_latest_ts": latest_ts,
             "adjusted_status": status,
@@ -3163,8 +3199,8 @@ def link_settlement_events_to_trade_groups(rows, events):
             "adjusted_effective_proceeds": round(effective_proceeds, 2),
             "adjusted_sold_shares": round(adjusted_sold_shares, 2),
             "adjusted_avg_exit_price": round(adjusted_avg_exit, 2),
-            "adjusted_remaining_shares": 0.0,
-            "adjusted_remaining_cost": 0.0,
+            "adjusted_remaining_shares": round(adjusted_remaining_shares, 4),
+            "adjusted_remaining_cost": 0.0 if adjusted_remaining_shares <= 1e-6 else round(safe_trade_float(match.get("remaining_cost"), 0.0) * (adjusted_remaining_shares / max(safe_trade_float(match.get("remaining_shares"), 0.0), adjusted_remaining_shares)), 2),
         })
         ev["_linked_to"] = match.get("key")
         ev["_linked_note"] = note
