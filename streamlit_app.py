@@ -881,6 +881,7 @@ DEFAULTS = {
     "imported_tx_ids": [],
     "portfolio_hidden_keys": [],
     "side_panel_mode": "panels",
+    "side_panel_section": "today",
     "paste_trades": [],
     "paste_events": [],
     "paste_unparsed": [],
@@ -919,33 +920,44 @@ for k, v in DEFAULTS.items():
 
 if st.session_state.get("side_panel_mode") not in ("panels", "focus"):
     st.session_state.side_panel_mode = "panels"
+if st.session_state.get("side_panel_section") not in ("today", "portfolio"):
+    st.session_state.side_panel_section = "today"
 
 _panel_mode = st.session_state.get("side_panel_mode", "panels")
-_sidebar_width = "clamp(26rem, 30vw, 31rem)" if _panel_mode == "panels" else "11.25rem"
-_main_max = "1040px" if _panel_mode == "panels" else "1240px"
-_sidebar_pad = "1.25rem .95rem" if _panel_mode == "panels" else "1rem .65rem"
-_focus_panel_hide = (
-    'section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"], '
-    '.sidebar-portfolio-panel { display: none !important; }'
-    if _panel_mode == "focus" else ""
-)
+_panel_section = st.session_state.get("side_panel_section", "today")
+_sidebar_width = "clamp(23.5rem, 28vw, 28rem)" if _panel_mode == "panels" else "10.5rem"
+_main_max = "1120px" if _panel_mode == "panels" else "1280px"
+_sidebar_pad = "1.1rem .85rem" if _panel_mode == "panels" else ".9rem .6rem"
+if _panel_mode == "focus":
+    _panel_hide_css = (
+        'section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"], '
+        '.sidebar-portfolio-panel { display: none !important; }'
+    )
+elif _panel_section == "today":
+    _panel_hide_css = '.sidebar-portfolio-panel { display: none !important; }'
+else:
+    _panel_hide_css = 'section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] { display: none !important; }'
 st.markdown(
     f"""
 <style>
 .portfolio-side-panel {{ display: none !important; }}
-{_focus_panel_hide}
+{_panel_hide_css}
 section[data-testid="stSidebar"] {{
   width: {_sidebar_width} !important;
   min-width: {_sidebar_width} !important;
   max-width: {_sidebar_width} !important;
+  border-right: 1px solid rgba(226,228,235,.78) !important;
 }}
 section[data-testid="stSidebar"] > div {{
   padding: {_sidebar_pad} !important;
+  background: rgba(246,247,250,.84) !important;
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
 }}
 .block-container {{
   max-width: {_main_max} !important;
-  padding-left: 1.6rem !important;
-  padding-right: 1.6rem !important;
+  padding-left: 1.9rem !important;
+  padding-right: 1.9rem !important;
   margin-right: auto !important;
 }}
 .sidebar-panel-stack {{
@@ -954,11 +966,50 @@ section[data-testid="stSidebar"] > div {{
   gap: 14px;
 }}
 .sidebar-portfolio-panel {{
-  margin-top: 14px;
+  margin-top: 12px;
 }}
 .sidebar-portfolio-panel .portfolio-panel-card {{
   max-height: none;
   overflow: visible;
+}}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div,
+.portfolio-panel-card {{
+  background: rgba(255,255,255,.88) !important;
+  border: 1px solid rgba(226,228,235,.86) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 1px 1px rgba(20,22,30,.03), 0 14px 34px rgba(20,22,30,.075) !important;
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+}}
+.today-goal-kpi,
+.portfolio-total-kpi {{
+  background: linear-gradient(180deg, #ffffff 0%, #f7f8fb 100%) !important;
+  border: 1px solid rgba(226,228,235,.88) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 10px 24px rgba(20,22,30,.055) !important;
+}}
+.today-goal-kpi .k,
+.portfolio-total-kpi .k {{
+  color: var(--gray) !important;
+}}
+.today-goal-kpi .v,
+.portfolio-total-kpi .v {{
+  color: var(--ink) !important;
+}}
+.today-goal-kpi .s,
+.portfolio-total-kpi .s {{
+  color: var(--gray) !important;
+}}
+.today-panel-dot {{
+  background: linear-gradient(180deg, #f5f7fb, #eef1f6) !important;
+  border-color: rgba(210,214,224,.95) !important;
+}}
+.today-panel-dot::after {{
+  background: #007aff !important;
+  box-shadow: 0 0 0 5px rgba(0,122,255,.10) !important;
+}}
+.portfolio-panel-badge {{
+  color: #0a7f45 !important;
+  background: rgba(232,246,238,.82) !important;
 }}
 @media (max-width: 1100px) {{
   section[data-testid="stSidebar"] {{
@@ -4042,6 +4093,15 @@ with st.sidebar:
         key="side_panel_mode",
         label_visibility="collapsed",
     )
+    if st.session_state.get("side_panel_mode") == "panels":
+        st.radio(
+            t("패널", "Panel"),
+            ["today", "portfolio"],
+            format_func=lambda section: t("오늘", "Today") if section == "today" else t("포트폴리오", "Portfolio"),
+            horizontal=True,
+            key="side_panel_section",
+            label_visibility="collapsed",
+        )
     if st.session_state.get("side_panel_mode") == "focus":
         st.caption(t("패널을 숨기고 메인 화면을 넓게 씁니다.", "Panels are hidden so the main view gets more room."))
 
