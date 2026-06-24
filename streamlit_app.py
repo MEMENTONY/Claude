@@ -880,6 +880,7 @@ DEFAULTS = {
     "wallet_addr": "",
     "imported_tx_ids": [],
     "portfolio_hidden_keys": [],
+    "side_panel_mode": "panels",
     "paste_trades": [],
     "paste_events": [],
     "paste_unparsed": [],
@@ -915,6 +916,64 @@ DEFAULTS = {
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+if st.session_state.get("side_panel_mode") not in ("panels", "focus"):
+    st.session_state.side_panel_mode = "panels"
+
+_panel_mode = st.session_state.get("side_panel_mode", "panels")
+_sidebar_width = "clamp(26rem, 30vw, 31rem)" if _panel_mode == "panels" else "11.25rem"
+_main_max = "1040px" if _panel_mode == "panels" else "1240px"
+_sidebar_pad = "1.25rem .95rem" if _panel_mode == "panels" else "1rem .65rem"
+_focus_panel_hide = (
+    'section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"], '
+    '.sidebar-portfolio-panel { display: none !important; }'
+    if _panel_mode == "focus" else ""
+)
+st.markdown(
+    f"""
+<style>
+.portfolio-side-panel {{ display: none !important; }}
+{_focus_panel_hide}
+section[data-testid="stSidebar"] {{
+  width: {_sidebar_width} !important;
+  min-width: {_sidebar_width} !important;
+  max-width: {_sidebar_width} !important;
+}}
+section[data-testid="stSidebar"] > div {{
+  padding: {_sidebar_pad} !important;
+}}
+.block-container {{
+  max-width: {_main_max} !important;
+  padding-left: 1.6rem !important;
+  padding-right: 1.6rem !important;
+  margin-right: auto !important;
+}}
+.sidebar-panel-stack {{
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}}
+.sidebar-portfolio-panel {{
+  margin-top: 14px;
+}}
+.sidebar-portfolio-panel .portfolio-panel-card {{
+  max-height: none;
+  overflow: visible;
+}}
+@media (max-width: 1100px) {{
+  section[data-testid="stSidebar"] {{
+    width: min(92vw, 31rem) !important;
+    min-width: min(92vw, 31rem) !important;
+    max-width: min(92vw, 31rem) !important;
+  }}
+  .block-container {{
+    max-width: 100% !important;
+  }}
+}}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 def t(ko, en):
@@ -3738,6 +3797,207 @@ def portfolio_hidden_summary():
     return total, hidden_count
 
 
+def portfolio_side_panel_html():
+    """Render the portfolio summary card for the left panel."""
+    _rp_portfolio = st.session_state.get("portfolio", []) or []
+    _rp_visible_portfolio = visible_portfolio_positions(_rp_portfolio)
+    _rp_total_holdings, _rp_hidden_holdings = portfolio_hidden_summary()
+    _rp_cash = _safe_float(st.session_state.get("cash"), 0.0)
+    _rp_wallet = str(st.session_state.get("wallet_addr", "") or "").strip()
+    _rp_pos_value = sum(_safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0) for p in _rp_portfolio if isinstance(p, dict))
+    _rp_pos_cost = sum(_safe_float(p.get("inv"), 0.0) for p in _rp_portfolio if isinstance(p, dict))
+    _rp_total = _rp_cash + _rp_pos_value
+    _rp_unrealized = _rp_pos_value - _rp_pos_cost
+    _rp_unrealized_pct = (_rp_unrealized / _rp_pos_cost * 100.0) if _rp_pos_cost else 0.0
+    _rp_exposure_pct = (_rp_pos_value / _rp_total * 100.0) if _rp_total else 0.0
+    _rp_wallet_label = (_rp_wallet[:6] + "..." + _rp_wallet[-4:]) if _rp_wallet else t("수동", "Manual")
+
+    _rp_rows = []
+    for _rp_p in _rp_visible_portfolio:
+        if not isinstance(_rp_p, dict):
+            continue
+        _rp_value = _safe_float(_rp_p.get("shares"), 0.0) * (_safe_float(_rp_p.get("cur"), 0.0) / 100.0)
+        _rp_rows.append((_rp_value, _rp_p))
+    _rp_rows_all = sorted(_rp_rows, key=lambda x: x[0], reverse=True)
+    _rp_rows = _rp_rows_all[:5]
+    _rp_more_holdings = max(len(_rp_rows_all) - len(_rp_rows), 0)
+
+    if _rp_rows:
+        _rp_holdings_html = "".join(
+            f'<div class="portfolio-position-row">'
+            f'<div><div class="n">{esc(p.get("name", "") or t("이름 없는 포지션", "Unnamed position"))}</div>'
+            f'<div class="o">{esc(p.get("outcome", "") or "-")} · {cents(_safe_float(p.get("cur"), 0.0))}</div></div>'
+            f'<div class="v">{money(value)}</div>'
+            f'</div>'
+            for value, p in _rp_rows
+        )
+        if _rp_more_holdings:
+            _rp_holdings_html += f'<div class="portfolio-more">{t(f"+{_rp_more_holdings}개 더", f"+{_rp_more_holdings} more")}</div>'
+    else:
+        _rp_holdings_html = (
+            f'<div class="portfolio-empty">'
+            f'{t("포트폴리오 탭에서 지갑 주소를 불러오면 여기에 요약이 표시됩니다.", "Import a wallet in the Portfolio tab to show a summary here.")}'
+            f'</div>'
+        )
+
+    _rp_completed = []
+    _rp_trade_sources = [
+        (st.session_state.get("auto_trades", []), st.session_state.get("activity_events", []) or [], t("지갑", "Wallet")),
+        (st.session_state.get("paste_trades", []), st.session_state.get("paste_events", []) or [], t("붙여넣기", "Paste")),
+    ]
+    for _rp_trades, _rp_events, _rp_source_label in _rp_trade_sources:
+        _rp_trade_rows = group_auto_trades_for_pnl(_rp_trades)
+        if _rp_events:
+            _rp_trade_rows = link_settlement_events_to_trade_groups(_rp_trade_rows, _rp_events)
+        for _rp_r in _rp_trade_rows:
+            _rp_pnl = _display_realized(_rp_r)
+            if _rp_pnl is None:
+                continue
+            _rp_bought = _safe_float(_rp_r.get("bought_shares"), 0.0)
+            _rp_remaining = _display_remaining_shares(_rp_r)
+            _rp_close_tolerance = max(0.05, _rp_bought * 0.01)
+            if _rp_remaining > _rp_close_tolerance:
+                continue
+            _rp_latest_dt = _rp_r.get("linked_event_time") or _rp_r.get("latest_dt") or ""
+            _rp_latest_obj = parse_trade_datetime({"d": _rp_latest_dt}) if _rp_latest_dt else None
+            _rp_completed.append({
+                "market": _rp_r.get("market", ""),
+                "outcome": _rp_r.get("outcome", ""),
+                "status": _rp_r.get("adjusted_status") or _rp_r.get("status", ""),
+                "source": _rp_source_label,
+                "pnl": _safe_float(_rp_pnl, 0.0),
+                "recovered": _safe_float(_rp_r.get("adjusted_effective_proceeds", _rp_r.get("sell_proceeds")), 0.0),
+                "latest_dt": _rp_latest_dt,
+                "_latest_ts": _rp_latest_obj.timestamp() if _rp_latest_obj else _safe_float(_rp_r.get("_latest_ts"), -1.0),
+            })
+    _rp_completed = sorted(_rp_completed, key=lambda r: r.get("_latest_ts", -1.0), reverse=True)[:5]
+    _rp_completed_total = sum(_safe_float(r.get("pnl"), 0.0) for r in _rp_completed)
+
+    _rp_today_start = _safe_float(st.session_state.get("today_start_cash"), 0.0)
+    _rp_today_stop = _safe_float(st.session_state.get("today_stop_loss_amount"), 0.0)
+    _rp_today_goal_mode = st.session_state.get("today_goal_mode", "percent")
+    if _rp_today_goal_mode == "percent":
+        _rp_today_goal_pct = _safe_float(st.session_state.get("today_goal_pct"), 0.0)
+        _rp_today_goal = _rp_today_start * _rp_today_goal_pct / 100.0
+    else:
+        _rp_today_goal = _safe_float(st.session_state.get("today_goal_amount"), 0.0)
+    _rp_today_pnl = _rp_total - _rp_today_start
+    _rp_today_gain = max(_rp_today_pnl, 0.0)
+    _rp_today_loss = max(-_rp_today_pnl, 0.0)
+    _rp_today_goal_left = max(_rp_today_goal - _rp_today_gain, 0.0)
+    _rp_today_stop_left = max(_rp_today_stop - _rp_today_loss, 0.0) if _rp_today_stop > 0 else 0.0
+    if _rp_today_start <= 0:
+        _rp_today_kind = "i"
+        _rp_today_title = t("시작 기준 필요", "Set start basis")
+        _rp_today_detail = t("왼쪽 패널에서 오늘 시작 금액을 먼저 설정하세요.", "Set today's starting cash in the left panel.")
+    elif _rp_today_stop > 0 and _rp_today_loss >= _rp_today_stop:
+        _rp_today_kind = "b"
+        _rp_today_title = t("중단선 도달", "Stop line reached")
+        _rp_today_detail = t(f"오늘 손익 {signed_money(_rp_today_pnl)} · 신규 진입 중단 기준입니다.", f"Today P&L {signed_money(_rp_today_pnl)} · stop new entries.")
+    elif _rp_today_goal > 0 and _rp_today_gain >= _rp_today_goal:
+        _rp_today_kind = "g"
+        _rp_today_title = t("목표 달성", "Goal reached")
+        _rp_today_detail = t(f"오늘 손익 {signed_money(_rp_today_pnl)} · 수익 보존 우선.", f"Today P&L {signed_money(_rp_today_pnl)} · protect gains.")
+    elif _rp_today_pnl < 0:
+        _rp_today_kind = "w"
+        _rp_today_title = t("손실 관리", "Managing loss")
+        _rp_today_detail = t(f"중단선까지 {money(_rp_today_stop_left)} 남음.", f"{money(_rp_today_stop_left)} left before stop.")
+    else:
+        _rp_today_kind = "g"
+        _rp_today_title = t("목표 진행 중", "On track")
+        _rp_today_detail = t(f"목표까지 {money(_rp_today_goal_left)} 남음.", f"{money(_rp_today_goal_left)} left to goal.")
+
+    _rp_today_html = (
+        f'<div class="portfolio-today-card {_rp_today_kind}">'
+        f'<div class="k">{t("오늘 기준 연결", "Today link")}</div>'
+        f'<div class="v">{esc(_rp_today_title)} · {signed_money(_rp_today_pnl)}</div>'
+        f'<div class="s">{t(f"현재 포트폴리오 {money(_rp_total)} · 목표 {money(_rp_today_goal)} · 중단 {money(_rp_today_stop)}", f"Portfolio {money(_rp_total)} · Goal {money(_rp_today_goal)} · Stop {money(_rp_today_stop)}")}<br>{esc(_rp_today_detail)}</div>'
+        f'</div>'
+    )
+
+    if _rp_completed:
+        parts = []
+        for r in _rp_completed:
+            cls = "g" if r["pnl"] >= 0 else "b"
+            pnl_label = t("이득", "Gain") if r["pnl"] >= 0 else t("손실", "Loss")
+            parts.append(
+                f'<div class="portfolio-completed-row {cls}">'
+                f'<div><div class="n">{esc(r["market"] or t("이름 없는 거래", "Unnamed trade"))}</div>'
+                f'<div class="o">{esc(r["outcome"] or "-")} · {esc(r["source"])} · {esc(r["status"])} · {t("회수", "Recovered")} {money(r["recovered"])}</div></div>'
+                f'<div class="v">{pnl_label} {signed_money(r["pnl"])}</div>'
+                f'</div>'
+            )
+        _rp_completed_html = "".join(parts)
+    else:
+        _rp_completed_html = (
+            f'<div class="portfolio-empty">'
+            f'{t("최근 완료된 매수/매도·상환 짝을 아직 찾지 못했습니다.", "No recent completed buy/sell or redemption matches yet.")}'
+            f'</div>'
+        )
+
+    _rp_has_data = bool(_rp_portfolio) or bool(_rp_wallet) or _rp_cash > 0
+    _rp_sub = (
+        t(f"{len(_rp_portfolio)}개 포지션 · {_rp_wallet_label}", f"{len(_rp_portfolio)} positions · {_rp_wallet_label}")
+        if _rp_has_data else
+        t("지갑 API 요약 대기 중", "Waiting for wallet API summary")
+    )
+    _rp_holdings_count_text = f'{len(_rp_visible_portfolio)}/{len(_rp_portfolio)}'
+    if _rp_hidden_holdings:
+        _rp_holdings_count_text += t(f" · {_rp_hidden_holdings}숨김", f" · {_rp_hidden_holdings} hidden")
+    _rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
+    _sync_meta = st.session_state.get("api_sync_meta", {}) or {}
+    _sync_status = str(_sync_meta.get("status", "") or "")
+    _sync_status_text = {
+        "ok": t("정상", "OK"),
+        "partial": t("부분 실패", "Partial"),
+    }.get(_sync_status, t("기록 없음", "No record"))
+    _sync_wallet = str(_sync_meta.get("wallet", "") or "")
+    _sync_wallet_short = (_sync_wallet[:6] + "..." + _sync_wallet[-4:]) if _sync_wallet else "-"
+    _sync_error = str(_sync_meta.get("error", "") or "")
+    _rp_sync_html = (
+        f'<details class="sync-details">'
+        f'<summary>{t("API 동기화 상태", "API sync status")}</summary>'
+        f'<div class="sync-body">'
+        f'<div class="sync-row"><span>{t("상태", "Status")}</span><b>{esc(_sync_status_text)}</b></div>'
+        f'<div class="sync-row"><span>{t("마지막 동기화", "Last sync")}</span><b>{esc(_sync_meta.get("last_sync_at", "-") or "-")}</b></div>'
+        f'<div class="sync-row"><span>{t("호출 위치", "Source")}</span><b>{esc(_sync_meta.get("source", "-") or "-")}</b></div>'
+        f'<div class="sync-row"><span>{t("지갑", "Wallet")}</span><b>{esc(_sync_wallet_short)}</b></div>'
+        f'<div class="sync-row"><span>{t("포지션", "Positions")}</span><b>{int(_sync_meta.get("positions", 0) or 0)}</b></div>'
+        f'<div class="sync-row"><span>{t("활동 원본", "Raw activity")}</span><b>{int(_sync_meta.get("raw_activity", 0) or 0)}</b></div>'
+        f'<div class="sync-row"><span>{t("거래/정산", "Trades/events")}</span><b>{int(_sync_meta.get("trades", 0) or 0)} / {int(_sync_meta.get("events", 0) or 0)}</b></div>'
+        f'<div class="sync-row"><span>{t("새로 추가", "Added")}</span><b>{int(_sync_meta.get("added", 0) or 0)}</b></div>'
+        + (f'<div class="sync-row"><span>{t("오류", "Error")}</span><b>{esc(_sync_error)}</b></div>' if _sync_error else '')
+        + f'</div></details>'
+    )
+
+    return (
+        f'<div class="sidebar-portfolio-panel">'
+        f'<div class="portfolio-panel-card">'
+        f'<div class="portfolio-panel-head">'
+        f'<div><div class="portfolio-panel-title">{t("현재 포트폴리오", "Current portfolio")}</div>'
+        f'<div class="portfolio-panel-sub">{esc(_rp_sub)}</div></div>'
+        f'<div class="portfolio-panel-badge">{_rp_badge}</div>'
+        f'</div>'
+        f'<div class="portfolio-total-kpi">'
+        f'<div class="k">{t("총 자산", "Total assets")}</div>'
+        f'<div class="v">{money(_rp_total)}</div>'
+        f'<div class="s">{t(f"미실현 {signed_money(_rp_unrealized)} · 수익률 {_rp_unrealized_pct:+.1f}%", f"Unrealized {signed_money(_rp_unrealized)} · ROI {_rp_unrealized_pct:+.1f}%")}</div>'
+        f'</div>'
+        f'<div class="portfolio-mini-grid">'
+        f'<div class="portfolio-mini-cell"><div class="k">{t("포지션 평가금", "Position value")}</div><div class="v">{money(_rp_pos_value)}</div></div>'
+        f'<div class="portfolio-mini-cell"><div class="k">{t("노출 비중", "Exposure")}</div><div class="v">{_rp_exposure_pct:.1f}%</div></div>'
+        f'</div>'
+        f'{_rp_today_html}'
+        f'<div class="portfolio-section-head"><div class="k">{t("보유종목", "Holdings")}</div><div class="v">{esc(_rp_holdings_count_text)}</div></div>'
+        f'<div class="portfolio-position-list">{_rp_holdings_html}</div>'
+        f'<div class="portfolio-section-head"><div class="k">{t("최근 완료 거래", "Recent completed")}</div><div class="v">{len(_rp_completed)}/5 · {signed_money(_rp_completed_total)}</div></div>'
+        f'<div class="portfolio-completed-list">{_rp_completed_html}</div>'
+        f'{_rp_sync_html}'
+        f'</div>'
+        f'</div>'
+    )
+
+
 # =====================================================
 # Masthead + language
 # =====================================================
@@ -3774,6 +4034,17 @@ _today_current_basis = _today_portfolio_assets if _today_has_portfolio_basis els
 
 # ---- 좌측 사이드바: 오늘 운용 기준 ----
 with st.sidebar:
+    st.radio(
+        t("화면 구성", "Layout"),
+        ["panels", "focus"],
+        format_func=lambda mode: t("패널 보기", "Panels") if mode == "panels" else t("메인 크게", "Focus"),
+        horizontal=True,
+        key="side_panel_mode",
+        label_visibility="collapsed",
+    )
+    if st.session_state.get("side_panel_mode") == "focus":
+        st.caption(t("패널을 숨기고 메인 화면을 넓게 씁니다.", "Panels are hidden so the main view gets more room."))
+
     st.session_state.setdefault("today_start_cash", float(_today_portfolio_assets if _today_has_portfolio_basis else 0.0))
     st.session_state.setdefault("today_stop_loss_amount", 0.0)
     st.session_state.setdefault("today_goal_mode", "percent")
@@ -3871,6 +4142,8 @@ with st.sidebar:
             goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
                                           min_value=0.0, key="today_goal_amount")
             goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
+
+    st.markdown(portfolio_side_panel_html(), unsafe_allow_html=True)
 
 tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
