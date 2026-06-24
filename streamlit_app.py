@@ -146,6 +146,25 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
   margin-top: 5px; font-size: 15px; font-weight: 760; letter-spacing: -.025em;
   color: var(--ink); font-variant-numeric: tabular-nums;
 }
+.today-status-card {
+  margin: 0 0 14px 0; padding: 13px 13px 12px 13px;
+  border-radius: 18px; border: 1px solid rgba(233,234,238,.9);
+  background: rgba(255,255,255,.72);
+}
+.today-status-card .k {
+  font-size: 10.5px; font-weight: 760; letter-spacing: .075em;
+  text-transform: uppercase; color: var(--gray);
+}
+.today-status-card .v {
+  margin-top: 5px; font-size: 15px; font-weight: 780;
+  letter-spacing: -.025em; color: var(--ink);
+}
+.today-status-card .s {
+  margin-top: 6px; font-size: 12px; line-height: 1.45; color: var(--gray);
+}
+.today-status-card.g { background: rgba(231,245,236,.72); border-color: rgba(15,122,67,.14); }
+.today-status-card.w { background: rgba(253,243,227,.76); border-color: rgba(164,94,7,.15); }
+.today-status-card.b { background: rgba(253,238,237,.78); border-color: rgba(197,54,47,.16); }
 .today-control-label {
   margin: 3px 0 9px 0; font-size: 11px; font-weight: 760;
   letter-spacing: .08em; text-transform: uppercase; color: var(--gray);
@@ -246,6 +265,23 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
 .portfolio-completed-row .v { font-size: 13px; font-weight: 790; font-variant-numeric: tabular-nums; }
 .portfolio-completed-row.g .v { color: var(--green); }
 .portfolio-completed-row.b .v { color: var(--red); }
+.sync-details {
+  margin-top: 13px; border-radius: 17px; border: 1px solid rgba(233,234,238,.9);
+  background: rgba(255,255,255,.62); overflow: hidden;
+}
+.sync-details summary {
+  cursor: pointer; list-style: none; padding: 11px 12px;
+  font-size: 12px; font-weight: 760; color: var(--ink2);
+}
+.sync-details summary::-webkit-details-marker { display: none; }
+.sync-details summary::after { content: "+"; float: right; color: var(--gray2); font-weight: 780; }
+.sync-details[open] summary::after { content: "−"; }
+.sync-details .sync-body {
+  padding: 0 12px 12px 12px; display: grid; gap: 7px;
+  font-size: 11.5px; color: var(--gray); line-height: 1.45;
+}
+.sync-details .sync-row { display:flex; justify-content:space-between; gap: 12px; }
+.sync-details .sync-row b { color: var(--ink2); font-weight: 720; }
 @media (min-width: 1380px) {
   .block-container { margin-right: 22.5rem !important; }
 }
@@ -820,6 +856,7 @@ DEFAULTS = {
     "wallet_raw": [],
     "activity_raw": [],
     "activity_events": [],
+    "api_sync_meta": {},
     "auto_trades": [],
     "wallet_addr": "",
     "imported_tx_ids": [],
@@ -3074,6 +3111,12 @@ def link_settlement_events_to_trade_groups(rows, events):
             note = t("정산 이벤트 자동 연결됨", "Settlement event auto-linked")
             adjusted_pnl = None if event_amount is None else proceeds + event_amount - buy_cost
             effective_proceeds = proceeds + (event_amount or 0.0)
+        sold_shares = safe_trade_float(match.get("sold_shares"), 0.0)
+        remaining_shares = safe_trade_float(match.get("remaining_shares"), 0.0)
+        event_shares = safe_trade_float(ev.get("shares"), 0.0)
+        event_close_shares = min(remaining_shares, event_shares) if event_shares > 0 else remaining_shares
+        adjusted_sold_shares = sold_shares + max(event_close_shares, 0.0)
+        adjusted_avg_exit = (effective_proceeds / adjusted_sold_shares * 100.0) if adjusted_sold_shares > 0 else 0.0
         match.update({
             "_adjusted": True,
             "linked_event_type": kind,
@@ -3084,6 +3127,8 @@ def link_settlement_events_to_trade_groups(rows, events):
             "adjusted_status": status,
             "adjusted_realized_pnl": None if adjusted_pnl is None else round(adjusted_pnl, 2),
             "adjusted_effective_proceeds": round(effective_proceeds, 2),
+            "adjusted_sold_shares": round(adjusted_sold_shares, 2),
+            "adjusted_avg_exit_price": round(adjusted_avg_exit, 2),
             "adjusted_remaining_shares": 0.0,
             "adjusted_remaining_cost": 0.0,
         })
@@ -3104,6 +3149,14 @@ def _display_remaining_shares(r):
 
 def _display_remaining_cost(r):
     return safe_trade_float(r.get("adjusted_remaining_cost"), 0.0) if r.get("_adjusted") else safe_trade_float(r.get("remaining_cost"), 0.0)
+
+
+def _display_sold_shares(r):
+    return safe_trade_float(r.get("adjusted_sold_shares"), 0.0) if r.get("_adjusted") else safe_trade_float(r.get("sold_shares"), 0.0)
+
+
+def _display_exit_price(r):
+    return safe_trade_float(r.get("adjusted_avg_exit_price"), 0.0) if r.get("_adjusted") else safe_trade_float(r.get("avg_sell_price"), 0.0)
 
 
 def summarize_selected_trade_groups(rows, selected_keys):
@@ -3219,6 +3272,8 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         status_text = r.get("adjusted_status") or r.get("status")
         rem_shares = _display_remaining_shares(r)
         rem_cost = _display_remaining_cost(r)
+        closed_shares = _display_sold_shares(r)
+        exit_price = _display_exit_price(r)
         pnl_label = t("실현손익(추정 · 정산반영)", "Realized est. · settlement applied") if r.get("_adjusted") else t("실현손익(추정)", "Realized est.")
         note_parts = [f'{t("체결 수", "Fills")}: {int(r.get("fills", 0))}']
         if r.get("linked_event_note"):
@@ -3247,9 +3302,9 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
   </div>
   <div class="pf-metrics">
     <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
-    <div class="pf-metric"><div class="k">{t("평균 매도", "Avg sell")}</div><div class="v">{cents(r.get("avg_sell_price", 0)) if r.get("sold_shares", 0) > 0 else "—"}</div></div>
+    <div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>
     <div class="pf-metric"><div class="k">{pnl_label}</div><div class="v">{pnl_text}</div></div>
-    <div class="pf-metric"><div class="k">{t("매수/매도 수량", "Bought/Sold")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {r.get("sold_shares", 0):.2f}</div></div>
+    <div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>
     <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
     <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>
   </div>
@@ -3271,13 +3326,10 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 
 
 def render_trade_event_cards(events, title=None):
-    events = events or []
+    events = [ev for ev in (events or []) if isinstance(ev, dict) and not ev.get("_linked_to")]
     if not events:
         return
-    linked = sum(1 for ev in events if isinstance(ev, dict) and ev.get("_linked_to"))
     st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{title or t("인식된 비거래 이벤트", "Recognized non-trade events")}</div>', unsafe_allow_html=True)
-    if linked and linked == len(events):
-        st.markdown(line(t("모든 정산 이벤트가 거래 요약에 연결되었습니다.", "All settlement events were linked to trade summaries."), "g"), unsafe_allow_html=True)
     for ev in events:
         dt = parse_trade_datetime(ev)
         when = dt.isoformat(timespec="minutes") if dt else t("시간 확인 필요", "time unknown")
@@ -3292,7 +3344,7 @@ def render_trade_event_cards(events, title=None):
             detail.append(str(ev.get("amount")))
         if ev.get("_linked_note"):
             detail.append(str(ev.get("_linked_note")))
-        state_html = f'<span class="state g">{t("연결됨", "Linked")}</span>' if ev.get("_linked_to") else f'<span class="state w">{t("미연결", "Unlinked")}</span>'
+        state_html = f'<span class="state w">{t("미연결", "Unlinked")}</span>'
         st.markdown(
             f'''<div class="spec-row">
   <div class="spec-key">{esc(ev.get("result", t("이벤트", "Event")))}</div>
@@ -3641,6 +3693,36 @@ with st.sidebar:
     else:
         panel_goal_amount = float(st.session_state.get("today_goal_amount") or 0.0)
         panel_goal_pct = (panel_goal_amount / panel_start_cash * 100.0) if panel_start_cash > 0 else 0.0
+    panel_current_assets = float(eb_ or 0.0)
+    panel_today_pnl = panel_current_assets - panel_start_cash
+    panel_gain = max(panel_today_pnl, 0.0)
+    panel_loss = max(-panel_today_pnl, 0.0)
+    panel_goal_left = max(panel_goal_amount - panel_gain, 0.0)
+    panel_stop_left = max(panel_stop_loss - panel_loss, 0.0) if panel_stop_loss > 0 else 0.0
+    if panel_start_cash <= 0:
+        panel_status_kind = "i"
+        panel_status_title = t("시작 현금 입력 필요", "Set starting cash")
+        panel_status_body = t("오늘 손익 판단을 위해 시작 현금을 먼저 입력하세요.", "Enter starting cash to judge today’s P&L.")
+    elif panel_stop_loss > 0 and panel_loss >= panel_stop_loss:
+        panel_status_kind = "b"
+        panel_status_title = t("중단선 도달", "Stop line reached")
+        panel_status_body = t("오늘 신규 진입을 멈추고 거래를 마감하는 기준입니다.", "This is the point to stop new entries for today.")
+    elif panel_stop_loss > 0 and panel_loss >= panel_stop_loss * 0.8:
+        panel_status_kind = "w"
+        panel_status_title = t("중단선 근접", "Near stop line")
+        panel_status_body = t(f"손실 중단까지 {money(panel_stop_left)} 남았습니다.", f"{money(panel_stop_left)} left before stop.")
+    elif panel_goal_amount > 0 and panel_gain >= panel_goal_amount:
+        panel_status_kind = "g"
+        panel_status_title = t("오늘 목표 달성", "Goal reached")
+        panel_status_body = t("수익 보존이 신규 진입보다 우선입니다.", "Protecting gains comes before new entries.")
+    elif panel_today_pnl >= 0:
+        panel_status_kind = "g"
+        panel_status_title = t("운용 정상", "On track")
+        panel_status_body = t(f"목표까지 {money(panel_goal_left)} 남았습니다.", f"{money(panel_goal_left)} left to goal.")
+    else:
+        panel_status_kind = "w"
+        panel_status_title = t("손실 관리 중", "Managing loss")
+        panel_status_body = t(f"현재 손실 {money(panel_loss)} · 중단선까지 {money(panel_stop_left)}", f"Loss {money(panel_loss)} · {money(panel_stop_left)} to stop.")
 
     with st.container(border=True):
         st.markdown(
@@ -3658,6 +3740,11 @@ with st.sidebar:
             f'<div class="today-limit-grid">'
             f'<div class="today-limit-cell"><div class="k">{t("시작 현금", "Start cash")}</div><div class="v">{money(panel_start_cash)}</div></div>'
             f'<div class="today-limit-cell"><div class="k">{t("손실 중단", "Stop loss")}</div><div class="v">{money(panel_stop_loss)}</div></div>'
+            f'</div>'
+            f'<div class="today-status-card {panel_status_kind}">'
+            f'<div class="k">{t("오늘 상태", "Today status")}</div>'
+            f'<div class="v">{panel_status_title}</div>'
+            f'<div class="s">{t(f"현재 {money(panel_current_assets)} · 오늘 손익 {signed_money(panel_today_pnl)}", f"Current {money(panel_current_assets)} · Today P&L {signed_money(panel_today_pnl)}")}<br>{panel_status_body}</div>'
             f'</div>'
             f'<div class="today-control-label">{t("조정", "Controls")}</div>'
             f'</div>',
@@ -4345,6 +4432,18 @@ with tab4:
                     items = sort_trades_newest_first(normalize_activity(raw))
                     added = merge_activity_into_log(items)
                     st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
+                    st.session_state.api_sync_meta = {
+                        "status": "ok",
+                        "source": t("거래일지", "Journal"),
+                        "wallet": a,
+                        "last_sync_at": datetime.now(KST).isoformat(timespec="minutes"),
+                        "positions": len(st.session_state.get("portfolio", []) or []),
+                        "raw_activity": len(raw) if isinstance(raw, list) else 0,
+                        "trades": len(items),
+                        "events": len(st.session_state.get("activity_events", []) or []),
+                        "added": added,
+                        "error": "",
+                    }
                     st.markdown(line(t(f"자동 거래내역 {len(items)}건 확인 · 새로 추가 {added}건", f"Found {len(items)} auto trades · added {added}"), "g"), unsafe_allow_html=True)
                 except urllib.error.HTTPError as e:
                     st.markdown(line(t(f"거래내역 불러오기 실패 (HTTP {e.code})", f"Activity import failed (HTTP {e.code})"), "b"), unsafe_allow_html=True)
@@ -4424,15 +4523,23 @@ with tab4:
             st.session_state.paste_events = meta.get("events", [])
             st.session_state.paste_unparsed = meta.get("unparsed", [])
             st.session_state.paste_meta = meta
-            st.markdown(line(t(f"정리 완료 — 매수 {meta.get('buy', 0)}건 · 매도 {meta.get('sell', 0)}건 · 이벤트 {len(meta.get('events', []))}건", f"Organized — buys {meta.get('buy', 0)} · sells {meta.get('sell', 0)} · events {len(meta.get('events', []))}"), "g"), unsafe_allow_html=True)
+            st.markdown(line(t(f"정리 완료 — 매수 {meta.get('buy', 0)}건 · 매도 {meta.get('sell', 0)}건 · 정산/상환 {len(meta.get('events', []))}건", f"Organized — buys {meta.get('buy', 0)} · sells {meta.get('sell', 0)} · settlements {len(meta.get('events', []))}"), "g"), unsafe_allow_html=True)
 
         meta = st.session_state.get("paste_meta", {}) or {}
         if st.session_state.get("paste_trades") or st.session_state.get("paste_events") or st.session_state.get("paste_unparsed"):
+            paste_events_for_stats = st.session_state.get("paste_events", []) or []
+            linked_event_count = 0
+            if st.session_state.get("paste_trades") and paste_events_for_stats:
+                stat_rows = group_auto_trades_for_pnl(st.session_state.get("paste_trades", []))
+                stat_rows = link_settlement_events_to_trade_groups(stat_rows, paste_events_for_stats)
+                linked_event_count = sum(1 for ev in paste_events_for_stats if isinstance(ev, dict) and ev.get("_linked_to"))
+            unlinked_event_count = max(len(paste_events_for_stats) - linked_event_count, 0)
+            exit_count = int(meta.get("sell", 0)) + linked_event_count
             st.markdown(
                 '<div class="stats">'
                 + stat(t("매수 인식", "Buys parsed"), f"{int(meta.get('buy', 0))}", "")
-                + stat(t("매도 인식", "Sells parsed"), f"{int(meta.get('sell', 0))}", "")
-                + stat(t("이벤트 인식", "Events recognized"), f"{len(st.session_state.get('paste_events', []))}", t("손실·상환·정산 등", "loss/redeem/settle"))
+                + stat(t("청산/회수 인식", "Exits parsed"), f"{exit_count}", t("매도+상환+손실정산", "sell+redeem+loss"))
+                + stat(t("미연결 이벤트", "Unlinked events"), f"{unlinked_event_count}", t("거래 매칭 필요", "needs matching"), "neg" if unlinked_event_count else "")
                 + stat(t("확인 필요", "Needs review"), f"{len(st.session_state.get('paste_unparsed', []))}", t("불완전 행만", "incomplete only"), "neg" if st.session_state.get("paste_unparsed") else "")
                 + "</div>", unsafe_allow_html=True
             )
@@ -4735,15 +4842,22 @@ with tab_pf:
                         st.session_state.pnl_raw = fetch_wallet_value(a)
                     except Exception as _pnl_err:
                         st.session_state.pnl_raw = {"error": str(_pnl_err)}
+                    activity_raw = []
+                    activity_items = []
+                    activity_events = []
+                    activity_added = 0
+                    activity_error = ""
                     try:
                         fetch_wallet_activity.clear()
                         activity_raw = fetch_wallet_activity(a, limit=200)
                         st.session_state.activity_raw = activity_raw
-                        st.session_state.activity_events = normalize_activity_events(activity_raw)
+                        activity_events = normalize_activity_events(activity_raw)
+                        st.session_state.activity_events = activity_events
                         activity_items = sort_trades_newest_first(normalize_activity(activity_raw))
-                        merge_activity_into_log(activity_items)
+                        activity_added = merge_activity_into_log(activity_items)
                         st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
                     except Exception as _activity_err:
+                        activity_error = str(_activity_err)
                         st.session_state.activity_events = st.session_state.get("activity_events", [])
                         st.session_state.activity_raw = st.session_state.get("activity_raw", [])
                         st.session_state.pnl_raw = {
@@ -4760,6 +4874,18 @@ with tab_pf:
                         cur=round(_safe_float(it.get("curPrice"), 0) * 100, 1),
                         asset=str(it.get("asset") or it.get("tokenId") or it.get("clobTokenId") or it.get("conditionId") or ""),
                     ) for it in open_items]
+                    st.session_state.api_sync_meta = {
+                        "status": "partial" if activity_error else "ok",
+                        "source": t("포트폴리오", "Portfolio"),
+                        "wallet": a,
+                        "last_sync_at": datetime.now(KST).isoformat(timespec="minutes"),
+                        "positions": len(open_items),
+                        "raw_activity": len(activity_raw) if isinstance(activity_raw, list) else 0,
+                        "trades": len(activity_items),
+                        "events": len(activity_events),
+                        "added": activity_added,
+                        "error": activity_error,
+                    }
                     st.toast(t(f"현재 보유 포지션 {len(open_items)}개", f"{len(open_items)} open positions"))
                     st.rerun()
                 except urllib.error.HTTPError as e:
@@ -5020,6 +5146,7 @@ with tab_set:
                   "auto_trades": st.session_state.auto_trades, "wallet_addr": st.session_state.wallet_addr,
                   "imported_tx_ids": st.session_state.imported_tx_ids,
                   "activity_events": st.session_state.get("activity_events", []),
+                  "api_sync_meta": st.session_state.get("api_sync_meta", {}),
                   "watchlist": st.session_state.watchlist, "order_candidates": st.session_state.order_candidates,
                   "pnl_raw": st.session_state.pnl_raw, "profile_pnl": st.session_state.profile_pnl,
                   "explore_url": st.session_state.explore_url, "explore_markets": st.session_state.explore_markets,
@@ -5049,6 +5176,7 @@ with tab_set:
                 st.session_state.wallet_addr = data.get("wallet_addr", "")
                 st.session_state.imported_tx_ids = data.get("imported_tx_ids", [])
                 st.session_state.activity_events = data.get("activity_events", st.session_state.get("activity_events", []))
+                st.session_state.api_sync_meta = data.get("api_sync_meta", st.session_state.get("api_sync_meta", {}))
                 st.session_state.watchlist = data.get("watchlist", [])
                 st.session_state.order_candidates = data.get("order_candidates", [])
                 st.session_state.pnl_raw = data.get("pnl_raw", {})
@@ -5160,6 +5288,30 @@ _rp_sub = (
     t("지갑 API 요약 대기 중", "Waiting for wallet API summary")
 )
 _rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
+_sync_meta = st.session_state.get("api_sync_meta", {}) or {}
+_sync_status = str(_sync_meta.get("status", "") or "")
+_sync_status_text = {
+    "ok": t("정상", "OK"),
+    "partial": t("부분 실패", "Partial"),
+}.get(_sync_status, t("기록 없음", "No record"))
+_sync_wallet = str(_sync_meta.get("wallet", "") or "")
+_sync_wallet_short = (_sync_wallet[:6] + "…" + _sync_wallet[-4:]) if _sync_wallet else "—"
+_sync_error = str(_sync_meta.get("error", "") or "")
+_rp_sync_html = (
+    f'<details class="sync-details">'
+    f'<summary>{t("API 동기화 상태", "API sync status")}</summary>'
+    f'<div class="sync-body">'
+    f'<div class="sync-row"><span>{t("상태", "Status")}</span><b>{esc(_sync_status_text)}</b></div>'
+    f'<div class="sync-row"><span>{t("마지막 동기화", "Last sync")}</span><b>{esc(_sync_meta.get("last_sync_at", "—") or "—")}</b></div>'
+    f'<div class="sync-row"><span>{t("호출 위치", "Source")}</span><b>{esc(_sync_meta.get("source", "—") or "—")}</b></div>'
+    f'<div class="sync-row"><span>{t("지갑", "Wallet")}</span><b>{esc(_sync_wallet_short)}</b></div>'
+    f'<div class="sync-row"><span>{t("포지션", "Positions")}</span><b>{int(_sync_meta.get("positions", 0) or 0)}</b></div>'
+    f'<div class="sync-row"><span>{t("활동 원본", "Raw activity")}</span><b>{int(_sync_meta.get("raw_activity", 0) or 0)}</b></div>'
+    f'<div class="sync-row"><span>{t("거래/정산", "Trades/events")}</span><b>{int(_sync_meta.get("trades", 0) or 0)} / {int(_sync_meta.get("events", 0) or 0)}</b></div>'
+    f'<div class="sync-row"><span>{t("새로 추가", "Added")}</span><b>{int(_sync_meta.get("added", 0) or 0)}</b></div>'
+    + (f'<div class="sync-row"><span>{t("오류", "Error")}</span><b>{esc(_sync_error)}</b></div>' if _sync_error else '')
+    + f'</div></details>'
+)
 
 st.markdown(
     f'<div class="portfolio-side-panel">'
@@ -5182,6 +5334,7 @@ st.markdown(
     f'<div class="portfolio-position-list">{_rp_holdings_html}</div>'
     f'<div class="portfolio-section-head"><div class="k">{t("최근 완료 거래", "Recent completed")}</div><div class="v">{len(_rp_completed)}/5 · {signed_money(_rp_completed_total)}</div></div>'
     f'<div class="portfolio-completed-list">{_rp_completed_html}</div>'
+    f'{_rp_sync_html}'
     f'</div>'
     f'</div>',
     unsafe_allow_html=True,
