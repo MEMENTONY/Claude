@@ -82,13 +82,13 @@ span[data-testid="stIconMaterial"] {
 }
 section[data-testid="stSidebar"] {
   display: flex !important;
-  width: 21rem !important;
-  min-width: 21rem !important;
+  width: 22.5rem !important;
+  min-width: 22.5rem !important;
   background: transparent !important;
 }
 section[data-testid="stSidebar"] > div {
   background: transparent !important;
-  padding: 1.1rem .8rem !important;
+  padding: 1.25rem .95rem !important;
 }
 [data-testid="collapsedControl"] { display: flex !important; }
 section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
@@ -96,43 +96,59 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
   border: none !important;
 }
 section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-  background: rgba(255,255,255,.92) !important;
-  border: 1px solid rgba(233,234,238,.95) !important;
-  border-radius: 22px !important;
-  box-shadow: 0 1px 2px rgba(20,22,30,.04), 0 18px 44px rgba(20,22,30,.08) !important;
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
-  padding: 18px 16px 16px 16px !important;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.96) 0%, rgba(248,249,252,.92) 100%) !important;
+  border: 1px solid rgba(226,228,235,.9) !important;
+  border-radius: 28px !important;
+  box-shadow: 0 1px 1px rgba(20,22,30,.04), 0 22px 54px rgba(20,22,30,.10) !important;
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  padding: 18px 16px 17px 16px !important;
+}
+.today-panel { padding: 1px 1px 8px 1px; }
+.today-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom: 14px; }
+.today-panel-title { font-size: 15px; font-weight: 780; letter-spacing: -.02em; line-height: 1.2; }
+.today-panel-sub { margin-top: 4px; font-size: 12px; color: var(--gray); line-height: 1.45; }
+.today-panel-dot {
+  width: 30px; height: 30px; border-radius: 12px;
+  background: linear-gradient(180deg, #f6f8ff, #e9edff);
+  border: 1px solid #dfe4ff;
+  position: relative; flex: 0 0 auto;
+}
+.today-panel-dot::after {
+  content: ""; position:absolute; inset: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 5px rgba(59,78,240,.10);
 }
 .today-goal-kpi {
-  margin: 6px 0 2px 0;
-  padding: 15px 16px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
-  border: 1px solid var(--hairline);
-  border-radius: 18px;
-  box-shadow: 0 1px 2px rgba(20,22,30,.04), 0 14px 34px rgba(20,22,30,.07);
+  margin: 0 0 12px 0;
+  padding: 18px 17px 16px 17px;
+  background: #111318;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 16px 34px rgba(20,22,30,.16);
 }
 .today-goal-kpi .k {
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--gray);
+  font-size: 11px; font-weight: 760; letter-spacing: .075em; text-transform: uppercase;
+  color: rgba(255,255,255,.64);
 }
 .today-goal-kpi .v {
-  margin-top: 7px;
-  font-size: 31px;
-  font-weight: 780;
-  letter-spacing: -.04em;
-  line-height: 1;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
+  margin-top: 8px; font-size: 39px; font-weight: 790; letter-spacing: -.04em;
+  line-height: .98; color: #fff; font-variant-numeric: tabular-nums;
 }
-.today-goal-kpi .s {
-  margin-top: 8px;
-  font-size: 12.5px;
-  color: var(--gray);
-  line-height: 1.45;
+.today-goal-kpi .s { margin-top: 9px; font-size: 12.5px; color: rgba(255,255,255,.66); line-height: 1.45; }
+.today-limit-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.today-limit-cell {
+  background: rgba(255,255,255,.72); border: 1px solid rgba(233,234,238,.9);
+  border-radius: 17px; padding: 11px 12px;
+}
+.today-limit-cell .k { font-size: 10.5px; color: var(--gray); font-weight: 700; letter-spacing: .02em; }
+.today-limit-cell .v {
+  margin-top: 5px; font-size: 15px; font-weight: 760; letter-spacing: -.025em;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.today-control-label {
+  margin: 3px 0 9px 0; font-size: 11px; font-weight: 760;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--gray);
 }
 .stApp, .main, div[data-testid="stAppViewContainer"] { overflow: visible !important; }
 header[data-testid="stHeader"] {
@@ -3418,9 +3434,36 @@ with st.sidebar:
     st.session_state.setdefault("today_goal_pct", 3.0)
     st.session_state.setdefault("today_goal_amount", 0.0)
 
+    panel_start_cash = float(st.session_state.get("today_start_cash") or 0.0)
+    panel_stop_loss = float(st.session_state.get("today_stop_loss_amount") or 0.0)
+    panel_goal_mode = st.session_state.get("today_goal_mode", "percent")
+    if panel_goal_mode == "percent":
+        panel_goal_pct = float(st.session_state.get("today_goal_pct") or 0.0)
+        panel_goal_amount = panel_start_cash * panel_goal_pct / 100.0
+    else:
+        panel_goal_amount = float(st.session_state.get("today_goal_amount") or 0.0)
+        panel_goal_pct = (panel_goal_amount / panel_start_cash * 100.0) if panel_start_cash > 0 else 0.0
+
     with st.container(border=True):
-        st.markdown(f'<div class="eyebrow" style="margin-top:0;">{t("오늘 운용 기준", "Today’s operating limits")}</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="today-panel">'
+            f'<div class="today-panel-head">'
+            f'<div><div class="today-panel-title">{t("오늘 운용 기준", "Today’s operating limits")}</div>'
+            f'<div class="today-panel-sub">{t("목표와 중단선을 한눈에 확인합니다.", "A quick read on target and stop line.")}</div></div>'
+            f'<div class="today-panel-dot"></div>'
+            f'</div>'
+            f'<div class="today-goal-kpi">'
+            f'<div class="k">{t("오늘 목표", "Today goal")}</div>'
+            f'<div class="v">{money(panel_goal_amount)}</div>'
+            f'<div class="s">{t(f"시작 현금의 {panel_goal_pct:.1f}%", f"{panel_goal_pct:.1f}% of start cash")}</div>'
+            f'</div>'
+            f'<div class="today-limit-grid">'
+            f'<div class="today-limit-cell"><div class="k">{t("시작 현금", "Start cash")}</div><div class="v">{money(panel_start_cash)}</div></div>'
+            f'<div class="today-limit-cell"><div class="k">{t("손실 중단", "Stop loss")}</div><div class="v">{money(panel_stop_loss)}</div></div>'
+            f'</div>'
+            f'<div class="today-control-label">{t("조정", "Controls")}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
 
         start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
                                      min_value=0.0, key="today_start_cash")
@@ -3441,14 +3484,6 @@ with st.sidebar:
             goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
                                           min_value=0.0, key="today_goal_amount")
             goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
-
-        st.markdown(
-            f'<div class="today-goal-kpi">'
-            f'<div class="k">{t("목표 금액", "Goal amount")}</div>'
-            f'<div class="v">{money(goal_amount)}</div>'
-            f'<div class="s">{t(f"시작 현금의 {goal_pct:.1f}%", f"{goal_pct:.1f}% of start cash")}</div>'
-            f'</div>',
-            unsafe_allow_html=True)
 
 tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
