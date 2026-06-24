@@ -150,6 +150,79 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
   margin: 3px 0 9px 0; font-size: 11px; font-weight: 760;
   letter-spacing: .08em; text-transform: uppercase; color: var(--gray);
 }
+.portfolio-side-panel {
+  position: fixed;
+  right: 18px;
+  top: 76px;
+  width: 21rem;
+  z-index: 42;
+  pointer-events: none;
+}
+.portfolio-panel-card {
+  pointer-events: auto;
+  background: linear-gradient(180deg, rgba(255,255,255,.96) 0%, rgba(248,249,252,.92) 100%);
+  border: 1px solid rgba(226,228,235,.9);
+  border-radius: 28px;
+  box-shadow: 0 1px 1px rgba(20,22,30,.04), 0 22px 54px rgba(20,22,30,.10);
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  padding: 18px 16px 16px 16px;
+}
+.portfolio-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom: 14px; }
+.portfolio-panel-title { font-size: 15px; font-weight: 780; letter-spacing: -.02em; line-height: 1.2; }
+.portfolio-panel-sub { margin-top: 4px; font-size: 12px; color: var(--gray); line-height: 1.45; }
+.portfolio-panel-badge {
+  min-width: 52px; padding: 6px 8px; border-radius: 999px; text-align:center;
+  font-size: 11px; font-weight: 760; color: var(--green);
+  background: var(--green-soft2); border: 1px solid rgba(15,122,67,.10);
+}
+.portfolio-total-kpi {
+  margin: 0 0 12px 0; padding: 18px 17px 16px 17px;
+  background: #111318; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 24px; box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 16px 34px rgba(20,22,30,.16);
+}
+.portfolio-total-kpi .k {
+  font-size: 11px; font-weight: 760; letter-spacing: .075em; text-transform: uppercase;
+  color: rgba(255,255,255,.64);
+}
+.portfolio-total-kpi .v {
+  margin-top: 8px; font-size: 36px; font-weight: 790; letter-spacing: -.04em;
+  line-height: .98; color: #fff; font-variant-numeric: tabular-nums;
+}
+.portfolio-total-kpi .s { margin-top: 9px; font-size: 12.5px; color: rgba(255,255,255,.66); line-height: 1.45; }
+.portfolio-mini-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 13px; }
+.portfolio-mini-cell {
+  background: rgba(255,255,255,.72); border: 1px solid rgba(233,234,238,.9);
+  border-radius: 17px; padding: 11px 12px;
+}
+.portfolio-mini-cell .k { font-size: 10.5px; color: var(--gray); font-weight: 700; letter-spacing: .02em; }
+.portfolio-mini-cell .v {
+  margin-top: 5px; font-size: 15px; font-weight: 760; letter-spacing: -.025em;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.portfolio-position-list { display:flex; flex-direction:column; gap: 7px; margin-top: 8px; }
+.portfolio-position-row {
+  display:grid; grid-template-columns: 1fr auto; gap: 10px; align-items:center;
+  padding: 9px 10px; border: 1px solid rgba(233,234,238,.9);
+  border-radius: 15px; background: rgba(255,255,255,.62);
+}
+.portfolio-position-row .n {
+  font-size: 12px; font-weight: 710; color: var(--ink2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.portfolio-position-row .o { margin-top: 3px; font-size: 11px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.portfolio-position-row .v { font-size: 12.5px; font-weight: 760; color: var(--ink); font-variant-numeric: tabular-nums; }
+.portfolio-empty {
+  padding: 18px 14px; border-radius: 20px; background: rgba(255,255,255,.72);
+  border: 1px dashed rgba(162,165,175,.45); font-size: 12.5px; color: var(--gray);
+  line-height: 1.55; text-align:center;
+}
+@media (min-width: 1380px) {
+  .block-container { margin-right: 22.5rem !important; }
+}
+@media (max-width: 1379px) {
+  .portfolio-side-panel { display: none; }
+}
 .stApp, .main, div[data-testid="stAppViewContainer"] { overflow: visible !important; }
 header[data-testid="stHeader"] {
   background: rgba(251,251,252,.82) !important;
@@ -4844,3 +4917,74 @@ with tab_set:
                 st.rerun()
             except Exception:
                 st.markdown(line(t("백업 파일을 읽지 못했습니다.", "Could not read backup."), "b"), unsafe_allow_html=True)
+
+
+# =====================================================
+# Floating right panel: portfolio summary
+# =====================================================
+_rp_portfolio = st.session_state.get("portfolio", []) or []
+_rp_cash = _safe_float(st.session_state.get("cash"), 0.0)
+_rp_wallet = str(st.session_state.get("wallet_addr", "") or "").strip()
+_rp_pos_value = sum(_safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0) for p in _rp_portfolio if isinstance(p, dict))
+_rp_pos_cost = sum(_safe_float(p.get("inv"), 0.0) for p in _rp_portfolio if isinstance(p, dict))
+_rp_total = _rp_cash + _rp_pos_value
+_rp_unrealized = _rp_pos_value - _rp_pos_cost
+_rp_unrealized_pct = (_rp_unrealized / _rp_pos_cost * 100.0) if _rp_pos_cost else 0.0
+_rp_exposure_pct = (_rp_pos_value / _rp_total * 100.0) if _rp_total else 0.0
+_rp_wallet_label = (_rp_wallet[:6] + "…" + _rp_wallet[-4:]) if _rp_wallet else t("수동", "Manual")
+
+_rp_rows = []
+for _rp_p in _rp_portfolio:
+    if not isinstance(_rp_p, dict):
+        continue
+    _rp_value = _safe_float(_rp_p.get("shares"), 0.0) * (_safe_float(_rp_p.get("cur"), 0.0) / 100.0)
+    _rp_rows.append((_rp_value, _rp_p))
+_rp_rows = sorted(_rp_rows, key=lambda x: x[0], reverse=True)[:3]
+
+if _rp_rows:
+    _rp_position_html = "".join(
+        f'<div class="portfolio-position-row">'
+        f'<div><div class="n">{esc(p.get("name", "") or t("이름 없는 포지션", "Unnamed position"))}</div>'
+        f'<div class="o">{esc(p.get("outcome", "") or "—")} · {cents(_safe_float(p.get("cur"), 0.0))}</div></div>'
+        f'<div class="v">{money(value)}</div>'
+        f'</div>'
+        for value, p in _rp_rows
+    )
+else:
+    _rp_position_html = (
+        f'<div class="portfolio-empty">'
+        f'{t("포트폴리오 탭에서 지갑 주소를 불러오면 여기에 요약이 표시됩니다.", "Import a wallet in the Portfolio tab to show a summary here.")}'
+        f'</div>'
+    )
+
+_rp_has_data = bool(_rp_portfolio) or bool(_rp_wallet) or _rp_cash > 0
+_rp_sub = (
+    t(f"{len(_rp_portfolio)}개 포지션 · {_rp_wallet_label}", f"{len(_rp_portfolio)} positions · {_rp_wallet_label}")
+    if _rp_has_data else
+    t("지갑 API 요약 대기 중", "Waiting for wallet API summary")
+)
+_rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
+
+st.markdown(
+    f'<div class="portfolio-side-panel">'
+    f'<div class="portfolio-panel-card">'
+    f'<div class="portfolio-panel-head">'
+    f'<div><div class="portfolio-panel-title">{t("현재 포트폴리오", "Current portfolio")}</div>'
+    f'<div class="portfolio-panel-sub">{esc(_rp_sub)}</div></div>'
+    f'<div class="portfolio-panel-badge">{_rp_badge}</div>'
+    f'</div>'
+    f'<div class="portfolio-total-kpi">'
+    f'<div class="k">{t("총 자산", "Total assets")}</div>'
+    f'<div class="v">{money(_rp_total)}</div>'
+    f'<div class="s">{t(f"미실현 {signed_money(_rp_unrealized)} · 수익률 {_rp_unrealized_pct:+.1f}%", f"Unrealized {signed_money(_rp_unrealized)} · ROI {_rp_unrealized_pct:+.1f}%")}</div>'
+    f'</div>'
+    f'<div class="portfolio-mini-grid">'
+    f'<div class="portfolio-mini-cell"><div class="k">{t("포지션 평가금", "Position value")}</div><div class="v">{money(_rp_pos_value)}</div></div>'
+    f'<div class="portfolio-mini-cell"><div class="k">{t("노출 비중", "Exposure")}</div><div class="v">{_rp_exposure_pct:.1f}%</div></div>'
+    f'</div>'
+    f'<div class="today-control-label">{t("상위 보유", "Top holdings")}</div>'
+    f'<div class="portfolio-position-list">{_rp_position_html}</div>'
+    f'</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
