@@ -221,6 +221,25 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
   margin-top: 5px; font-size: 15px; font-weight: 760; letter-spacing: -.025em;
   color: var(--ink); font-variant-numeric: tabular-nums;
 }
+.portfolio-today-card {
+  margin: 0 0 13px 0; padding: 12px 12px 11px 12px;
+  border-radius: 18px; border: 1px solid rgba(233,234,238,.9);
+  background: rgba(255,255,255,.72);
+}
+.portfolio-today-card .k {
+  font-size: 10.5px; font-weight: 760; letter-spacing: .075em;
+  text-transform: uppercase; color: var(--gray);
+}
+.portfolio-today-card .v {
+  margin-top: 5px; font-size: 15px; font-weight: 790;
+  letter-spacing: -.025em; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.portfolio-today-card .s {
+  margin-top: 5px; font-size: 11.5px; line-height: 1.45; color: var(--gray);
+}
+.portfolio-today-card.g { background: rgba(231,245,236,.72); border-color: rgba(15,122,67,.14); }
+.portfolio-today-card.w { background: rgba(253,243,227,.76); border-color: rgba(164,94,7,.15); }
+.portfolio-today-card.b { background: rgba(253,238,237,.78); border-color: rgba(197,54,47,.16); }
 .portfolio-position-list { display:flex; flex-direction:column; gap: 7px; margin-top: 8px; }
 .portfolio-position-row {
   display:grid; grid-template-columns: 1fr auto; gap: 10px; align-items:center;
@@ -860,6 +879,7 @@ DEFAULTS = {
     "auto_trades": [],
     "wallet_addr": "",
     "imported_tx_ids": [],
+    "portfolio_hidden_keys": [],
     "paste_trades": [],
     "paste_events": [],
     "paste_unparsed": [],
@@ -2627,6 +2647,11 @@ def parse_pasted_activity(text):
     def _clean_line(s):
         return str(s or "").strip()
 
+    def _clean_title(s):
+        s = _clean_line(s)
+        m = re.fullmatch(r"\[([^\]]+)\]\(https?://[^)\s]+\)", s)
+        return m.group(1).strip() if m else s
+
     raw_lines = [_clean_line(x) for x in src.split("\n")]
     lines = [ln for ln in raw_lines if ln]
 
@@ -2715,11 +2740,11 @@ def parse_pasted_activity(text):
         content_lines = []
         for ln in blines:
             if ln.lower().startswith("icon for "):
-                title = ln[9:].strip()
+                title = _clean_title(ln[9:].strip())
             else:
                 content_lines.append(ln)
         if not title and content_lines:
-            title = content_lines[0].strip()
+            title = _clean_title(content_lines[0].strip())
 
         outcome, price = "", None
         for ln in content_lines:
@@ -3117,6 +3142,13 @@ def link_settlement_events_to_trade_groups(rows, events):
         event_close_shares = min(remaining_shares, event_shares) if event_shares > 0 else remaining_shares
         adjusted_sold_shares = sold_shares + max(event_close_shares, 0.0)
         adjusted_avg_exit = (effective_proceeds / adjusted_sold_shares * 100.0) if adjusted_sold_shares > 0 else 0.0
+        event_dt = parse_trade_datetime(ev)
+        latest_dt = parse_trade_datetime({"d": match.get("latest_dt")}) if match.get("latest_dt") else None
+        display_latest_dt = match.get("latest_dt", "")
+        latest_ts = safe_trade_float(match.get("_latest_ts"), -1.0)
+        if event_dt is not None and (latest_dt is None or event_dt > latest_dt):
+            display_latest_dt = event_dt.isoformat(timespec="minutes")
+            latest_ts = event_dt.timestamp()
         match.update({
             "_adjusted": True,
             "linked_event_type": kind,
@@ -3124,6 +3156,8 @@ def link_settlement_events_to_trade_groups(rows, events):
             "linked_event_shares": ev.get("shares"),
             "linked_event_time": ev.get("d"),
             "linked_event_note": note,
+            "latest_dt": display_latest_dt,
+            "_latest_ts": latest_ts,
             "adjusted_status": status,
             "adjusted_realized_pnl": None if adjusted_pnl is None else round(adjusted_pnl, 2),
             "adjusted_effective_proceeds": round(effective_proceeds, 2),
@@ -3646,6 +3680,28 @@ def analyze_portfolio_position(p, bankroll):
             "cur": cur, "buy": buy, "shares": sh, "investment": inv, "lines": lines_}
 
 
+def portfolio_position_key(p):
+    if not isinstance(p, dict):
+        return ""
+    asset = str(p.get("asset") or p.get("token_id") or p.get("conditionId") or "").strip()
+    if asset:
+        return f"asset:{asset}"
+    return "pos:" + _norm_key(f'{p.get("name", "")}|{p.get("outcome", "")}|{p.get("buy", "")}|{p.get("shares", "")}')
+
+
+def visible_portfolio_positions(portfolio=None):
+    hidden = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
+    return [p for p in (portfolio if portfolio is not None else st.session_state.get("portfolio", [])) or []
+            if portfolio_position_key(p) not in hidden]
+
+
+def portfolio_hidden_summary():
+    hidden = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
+    total = len(st.session_state.get("portfolio", []) or [])
+    hidden_count = sum(1 for p in st.session_state.get("portfolio", []) or [] if portfolio_position_key(p) in hidden)
+    return total, hidden_count
+
+
 # =====================================================
 # Masthead + language
 # =====================================================
@@ -3675,14 +3731,20 @@ prof = profile()
 g_, c1_, c2_, blk_ = size_thresholds()
 eb_ = effective_bankroll()
 exp_limit_ = min(blk_ * 2, 50)
+_today_pos_value = sum((_safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0)) for p in st.session_state.get("portfolio", []) if isinstance(p, dict))
+_today_portfolio_assets = _safe_float(st.session_state.get("cash"), 0.0) + _today_pos_value
+_today_has_portfolio_basis = bool(st.session_state.get("portfolio")) or _safe_float(st.session_state.get("cash"), 0.0) > 0
+_today_current_basis = _today_portfolio_assets if _today_has_portfolio_basis else float(eb_ or 0.0)
 
 # ---- 좌측 사이드바: 오늘 운용 기준 ----
 with st.sidebar:
-    st.session_state.setdefault("today_start_cash", float(eb_ or 0.0))
+    st.session_state.setdefault("today_start_cash", float(_today_portfolio_assets if _today_has_portfolio_basis else 0.0))
     st.session_state.setdefault("today_stop_loss_amount", 0.0)
     st.session_state.setdefault("today_goal_mode", "percent")
     st.session_state.setdefault("today_goal_pct", 3.0)
     st.session_state.setdefault("today_goal_amount", 0.0)
+    if _today_has_portfolio_basis and _safe_float(st.session_state.get("today_start_cash"), 0.0) <= 0:
+        st.session_state.today_start_cash = float(_today_portfolio_assets)
 
     panel_start_cash = float(st.session_state.get("today_start_cash") or 0.0)
     panel_stop_loss = float(st.session_state.get("today_stop_loss_amount") or 0.0)
@@ -3693,7 +3755,7 @@ with st.sidebar:
     else:
         panel_goal_amount = float(st.session_state.get("today_goal_amount") or 0.0)
         panel_goal_pct = (panel_goal_amount / panel_start_cash * 100.0) if panel_start_cash > 0 else 0.0
-    panel_current_assets = float(eb_ or 0.0)
+    panel_current_assets = float(_today_current_basis or 0.0)
     panel_today_pnl = panel_current_assets - panel_start_cash
     panel_gain = max(panel_today_pnl, 0.0)
     panel_loss = max(-panel_today_pnl, 0.0)
@@ -3744,11 +3806,15 @@ with st.sidebar:
             f'<div class="today-status-card {panel_status_kind}">'
             f'<div class="k">{t("오늘 상태", "Today status")}</div>'
             f'<div class="v">{panel_status_title}</div>'
-            f'<div class="s">{t(f"현재 {money(panel_current_assets)} · 오늘 손익 {signed_money(panel_today_pnl)}", f"Current {money(panel_current_assets)} · Today P&L {signed_money(panel_today_pnl)}")}<br>{panel_status_body}</div>'
+            f'<div class="s">{t(f"포트폴리오 기준 현재 {money(panel_current_assets)} · 오늘 손익 {signed_money(panel_today_pnl)}", f"Portfolio current {money(panel_current_assets)} · Today P&L {signed_money(panel_today_pnl)}")}<br>{panel_status_body}</div>'
             f'</div>'
             f'<div class="today-control-label">{t("조정", "Controls")}</div>'
             f'</div>',
             unsafe_allow_html=True)
+
+        if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), use_container_width=True, key="sync_today_start_from_portfolio"):
+            st.session_state.today_start_cash = float(panel_current_assets)
+            st.rerun()
 
         start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
                                      min_value=0.0, key="today_start_cash")
@@ -4895,6 +4961,38 @@ with tab_pf:
                 except Exception as e:
                     st.markdown(line(t(f"불러오기 실패 — {e}", f"Import failed — {e}"), "b"), unsafe_allow_html=True)
 
+    if st.session_state.portfolio:
+        hidden_labels = {}
+        hidden_options = []
+        for p in st.session_state.portfolio:
+            k = portfolio_position_key(p)
+            if not k:
+                continue
+            val = _safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0)
+            label = f'{p.get("name", "Polymarket position")} · {p.get("outcome", "—")} · {money(val)}'
+            hidden_options.append(k)
+            hidden_labels[k] = label
+        valid_hidden = [k for k in st.session_state.get("portfolio_hidden_keys", []) if k in hidden_labels]
+        if valid_hidden != st.session_state.get("portfolio_hidden_keys", []):
+            st.session_state.portfolio_hidden_keys = valid_hidden
+        if st.session_state.get("portfolio_hidden_keys_select") != valid_hidden:
+            st.session_state.portfolio_hidden_keys_select = valid_hidden
+
+        with st.expander(t("보유항목 숨김 관리", "Hide holdings"), expanded=False):
+            st.markdown(
+                f'<div class="footnote" style="margin:0 0 10px 0;">'
+                f'{t("숨긴 항목은 카드와 오른쪽 요약에서만 숨겨집니다. 총자산·오늘 손익 계산에는 계속 포함됩니다.", "Hidden holdings are only hidden from cards and the side summary. They still count toward total assets and today P&L.")}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            selected_hidden = st.multiselect(
+                t("숨길 보유항목", "Holdings to hide"),
+                hidden_options,
+                format_func=lambda k: hidden_labels.get(k, k),
+                key="portfolio_hidden_keys_select",
+            )
+            st.session_state.portfolio_hidden_keys = list(selected_hidden)
+
     if st.session_state.get("dev_mode", False):
         with st.expander(t("디버그 — positions raw 응답", "Debug — raw positions response")):
             st.json(st.session_state.wallet_raw)
@@ -4918,16 +5016,22 @@ with tab_pf:
     pos_cost = sum((p.get("inv", 0) or 0) for p in st.session_state.portfolio)
     total_assets = cash + pos_value
     bankroll_for_positions = total_assets if total_assets > 0 else prof["assets"]
+    visible_pf = visible_portfolio_positions(st.session_state.portfolio)
+    pf_total_count, pf_hidden_count = portfolio_hidden_summary()
 
     # ================= 1) OPEN POSITIONS FIRST =================
-    st.markdown(f'<div class="eyebrow">{t("현재 보유 포지션", "Open positions")}</div>', unsafe_allow_html=True)
+    hidden_note = f" · {t(f'{pf_hidden_count}개 숨김', f'{pf_hidden_count} hidden')}" if pf_hidden_count else ""
+    st.markdown(f'<div class="eyebrow">{t("현재 보유 포지션", "Open positions")}{hidden_note}</div>', unsafe_allow_html=True)
     if st.session_state.portfolio:
-        cards = []
-        for p in st.session_state.portfolio:
-            ar = analyze_portfolio_position(p, bankroll_for_positions)
-            ar.update(link_position_to_trades(p, st.session_state.auto_trades))
-            cards.append(portfolio_card_html(ar))
-        st.markdown('<div class="pf-grid">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+        if visible_pf:
+            cards = []
+            for p in visible_pf:
+                ar = analyze_portfolio_position(p, bankroll_for_positions)
+                ar.update(link_position_to_trades(p, st.session_state.auto_trades))
+                cards.append(portfolio_card_html(ar))
+            st.markdown('<div class="pf-grid">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="quiet" style="padding:28px 18px;"><div class="q-title">{t("표시할 보유 포지션이 없습니다", "No visible holdings")}</div><div class="q-body">{t("보유항목 숨김 관리에서 선택을 해제하면 다시 표시됩니다.", "Unselect items in Hide holdings to show them again.")}</div></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="footnote">{t("카드는 현재가·평균가·수량·투자금만으로 자동 판단합니다. 아래 편집표에서 값을 고치면 즉시 다시 계산됩니다.", "Cards use price, average, shares and cost only. Edit the table below to recalculate instantly.")}</div>', unsafe_allow_html=True)
 
         with st.expander(t("보유 포지션 편집표", "Edit open positions table"), expanded=False):
@@ -4946,7 +5050,7 @@ with tab_pf:
             st.session_state.portfolio = edited.to_dict("records")
 
         with st.expander(t("포지션별 핵심 판단", "Per-position verdicts"), expanded=False):
-            for p in st.session_state.portfolio:
+            for p in visible_pf:
                 ar = analyze_portfolio_position(p, bankroll_for_positions)
                 ar.update(link_position_to_trades(p, st.session_state.auto_trades))
                 st.markdown(line(f'<b>{esc(ar["name"])}</b> — {esc(ar["title"])} · {esc(ar["summary"])} · {esc(ar.get("match_note", ""))}', ar["kind"]), unsafe_allow_html=True)
@@ -5145,6 +5249,7 @@ with tab_set:
                   "portfolio": st.session_state.portfolio, "trade_log": st.session_state.trade_log,
                   "auto_trades": st.session_state.auto_trades, "wallet_addr": st.session_state.wallet_addr,
                   "imported_tx_ids": st.session_state.imported_tx_ids,
+                  "portfolio_hidden_keys": st.session_state.get("portfolio_hidden_keys", []),
                   "activity_events": st.session_state.get("activity_events", []),
                   "api_sync_meta": st.session_state.get("api_sync_meta", {}),
                   "watchlist": st.session_state.watchlist, "order_candidates": st.session_state.order_candidates,
@@ -5175,6 +5280,7 @@ with tab_set:
                 st.session_state.auto_trades = data.get("auto_trades", [])
                 st.session_state.wallet_addr = data.get("wallet_addr", "")
                 st.session_state.imported_tx_ids = data.get("imported_tx_ids", [])
+                st.session_state.portfolio_hidden_keys = data.get("portfolio_hidden_keys", st.session_state.get("portfolio_hidden_keys", []))
                 st.session_state.activity_events = data.get("activity_events", st.session_state.get("activity_events", []))
                 st.session_state.api_sync_meta = data.get("api_sync_meta", st.session_state.get("api_sync_meta", {}))
                 st.session_state.watchlist = data.get("watchlist", [])
@@ -5197,6 +5303,8 @@ with tab_set:
 # Floating right panel: portfolio summary
 # =====================================================
 _rp_portfolio = st.session_state.get("portfolio", []) or []
+_rp_visible_portfolio = visible_portfolio_positions(_rp_portfolio)
+_rp_total_holdings, _rp_hidden_holdings = portfolio_hidden_summary()
 _rp_cash = _safe_float(st.session_state.get("cash"), 0.0)
 _rp_wallet = str(st.session_state.get("wallet_addr", "") or "").strip()
 _rp_pos_value = sum(_safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0) for p in _rp_portfolio if isinstance(p, dict))
@@ -5208,7 +5316,7 @@ _rp_exposure_pct = (_rp_pos_value / _rp_total * 100.0) if _rp_total else 0.0
 _rp_wallet_label = (_rp_wallet[:6] + "…" + _rp_wallet[-4:]) if _rp_wallet else t("수동", "Manual")
 
 _rp_rows = []
-for _rp_p in _rp_portfolio:
+for _rp_p in _rp_visible_portfolio:
     if not isinstance(_rp_p, dict):
         continue
     _rp_value = _safe_float(_rp_p.get("shares"), 0.0) * (_safe_float(_rp_p.get("cur"), 0.0) / 100.0)
@@ -5235,41 +5343,87 @@ else:
         f'</div>'
     )
 
-_rp_trade_rows = group_auto_trades_for_pnl(st.session_state.get("auto_trades", []))
-_rp_activity_events = st.session_state.get("activity_events", []) or []
-if _rp_activity_events:
-    _rp_trade_rows = link_settlement_events_to_trade_groups(_rp_trade_rows, _rp_activity_events)
-
 _rp_completed = []
-for _rp_r in _rp_trade_rows:
-    _rp_pnl = _display_realized(_rp_r)
-    if _rp_pnl is None:
-        continue
-    _rp_bought = _safe_float(_rp_r.get("bought_shares"), 0.0)
-    _rp_remaining = _display_remaining_shares(_rp_r)
-    _rp_close_tolerance = max(0.05, _rp_bought * 0.01)
-    if _rp_remaining > _rp_close_tolerance:
-        continue
-    _rp_latest_dt = _rp_r.get("linked_event_time") or _rp_r.get("latest_dt") or ""
-    _rp_latest_obj = parse_trade_datetime({"d": _rp_latest_dt}) if _rp_latest_dt else None
-    _rp_completed.append({
-        "market": _rp_r.get("market", ""),
-        "outcome": _rp_r.get("outcome", ""),
-        "status": _rp_r.get("adjusted_status") or _rp_r.get("status", ""),
-        "pnl": _safe_float(_rp_pnl, 0.0),
-        "recovered": _safe_float(_rp_r.get("adjusted_effective_proceeds", _rp_r.get("sell_proceeds")), 0.0),
-        "cost": _safe_float(_rp_r.get("buy_cost"), 0.0),
-        "latest_dt": _rp_latest_dt,
-        "_latest_ts": _rp_latest_obj.timestamp() if _rp_latest_obj else _safe_float(_rp_r.get("_latest_ts"), -1.0),
-    })
+_rp_trade_sources = [
+    (st.session_state.get("auto_trades", []), st.session_state.get("activity_events", []) or [], t("지갑", "Wallet")),
+    (st.session_state.get("paste_trades", []), st.session_state.get("paste_events", []) or [], t("붙여넣기", "Paste")),
+]
+for _rp_trades, _rp_events, _rp_source_label in _rp_trade_sources:
+    _rp_trade_rows = group_auto_trades_for_pnl(_rp_trades)
+    if _rp_events:
+        _rp_trade_rows = link_settlement_events_to_trade_groups(_rp_trade_rows, _rp_events)
+    for _rp_r in _rp_trade_rows:
+        _rp_pnl = _display_realized(_rp_r)
+        if _rp_pnl is None:
+            continue
+        _rp_bought = _safe_float(_rp_r.get("bought_shares"), 0.0)
+        _rp_remaining = _display_remaining_shares(_rp_r)
+        _rp_close_tolerance = max(0.05, _rp_bought * 0.01)
+        if _rp_remaining > _rp_close_tolerance:
+            continue
+        _rp_latest_dt = _rp_r.get("linked_event_time") or _rp_r.get("latest_dt") or ""
+        _rp_latest_obj = parse_trade_datetime({"d": _rp_latest_dt}) if _rp_latest_dt else None
+        _rp_completed.append({
+            "market": _rp_r.get("market", ""),
+            "outcome": _rp_r.get("outcome", ""),
+            "status": _rp_r.get("adjusted_status") or _rp_r.get("status", ""),
+            "source": _rp_source_label,
+            "pnl": _safe_float(_rp_pnl, 0.0),
+            "recovered": _safe_float(_rp_r.get("adjusted_effective_proceeds", _rp_r.get("sell_proceeds")), 0.0),
+            "cost": _safe_float(_rp_r.get("buy_cost"), 0.0),
+            "latest_dt": _rp_latest_dt,
+            "_latest_ts": _rp_latest_obj.timestamp() if _rp_latest_obj else _safe_float(_rp_r.get("_latest_ts"), -1.0),
+        })
 _rp_completed = sorted(_rp_completed, key=lambda r: r.get("_latest_ts", -1.0), reverse=True)[:5]
 _rp_completed_total = sum(_safe_float(r.get("pnl"), 0.0) for r in _rp_completed)
+
+_rp_today_start = _safe_float(st.session_state.get("today_start_cash"), 0.0)
+_rp_today_stop = _safe_float(st.session_state.get("today_stop_loss_amount"), 0.0)
+_rp_today_goal_mode = st.session_state.get("today_goal_mode", "percent")
+if _rp_today_goal_mode == "percent":
+    _rp_today_goal_pct = _safe_float(st.session_state.get("today_goal_pct"), 0.0)
+    _rp_today_goal = _rp_today_start * _rp_today_goal_pct / 100.0
+else:
+    _rp_today_goal = _safe_float(st.session_state.get("today_goal_amount"), 0.0)
+    _rp_today_goal_pct = (_rp_today_goal / _rp_today_start * 100.0) if _rp_today_start > 0 else 0.0
+_rp_today_pnl = _rp_total - _rp_today_start
+_rp_today_gain = max(_rp_today_pnl, 0.0)
+_rp_today_loss = max(-_rp_today_pnl, 0.0)
+_rp_today_goal_left = max(_rp_today_goal - _rp_today_gain, 0.0)
+_rp_today_stop_left = max(_rp_today_stop - _rp_today_loss, 0.0) if _rp_today_stop > 0 else 0.0
+if _rp_today_start <= 0:
+    _rp_today_kind = "i"
+    _rp_today_title = t("시작 기준 필요", "Set start basis")
+    _rp_today_detail = t("왼쪽 패널에서 오늘 시작 금액을 먼저 설정하세요.", "Set today's starting cash in the left panel.")
+elif _rp_today_stop > 0 and _rp_today_loss >= _rp_today_stop:
+    _rp_today_kind = "b"
+    _rp_today_title = t("중단선 도달", "Stop line reached")
+    _rp_today_detail = t(f"오늘 손익 {signed_money(_rp_today_pnl)} · 신규 진입 중단 기준입니다.", f"Today P&L {signed_money(_rp_today_pnl)} · stop new entries.")
+elif _rp_today_goal > 0 and _rp_today_gain >= _rp_today_goal:
+    _rp_today_kind = "g"
+    _rp_today_title = t("목표 달성", "Goal reached")
+    _rp_today_detail = t(f"오늘 손익 {signed_money(_rp_today_pnl)} · 수익 보존 우선.", f"Today P&L {signed_money(_rp_today_pnl)} · protect gains.")
+elif _rp_today_pnl < 0:
+    _rp_today_kind = "w"
+    _rp_today_title = t("손실 관리", "Managing loss")
+    _rp_today_detail = t(f"중단선까지 {money(_rp_today_stop_left)} 남음.", f"{money(_rp_today_stop_left)} left before stop.")
+else:
+    _rp_today_kind = "g"
+    _rp_today_title = t("목표 진행 중", "On track")
+    _rp_today_detail = t(f"목표까지 {money(_rp_today_goal_left)} 남음.", f"{money(_rp_today_goal_left)} left to goal.")
+_rp_today_html = (
+    f'<div class="portfolio-today-card {_rp_today_kind}">'
+    f'<div class="k">{t("오늘 기준 연결", "Today link")}</div>'
+    f'<div class="v">{esc(_rp_today_title)} · {signed_money(_rp_today_pnl)}</div>'
+    f'<div class="s">{t(f"현재 포트폴리오 {money(_rp_total)} · 목표 {money(_rp_today_goal)} · 중단 {money(_rp_today_stop)}", f"Portfolio {money(_rp_total)} · Goal {money(_rp_today_goal)} · Stop {money(_rp_today_stop)}")}<br>{esc(_rp_today_detail)}</div>'
+    f'</div>'
+)
 
 if _rp_completed:
     _rp_completed_html = "".join(
         f'<div class="portfolio-completed-row {"g" if r["pnl"] >= 0 else "b"}">'
         f'<div><div class="n">{esc(r["market"] or t("이름 없는 거래", "Unnamed trade"))}</div>'
-        f'<div class="o">{esc(r["outcome"] or "—")} · {esc(r["status"])} · {t("회수", "Recovered")} {money(r["recovered"])}</div></div>'
+        f'<div class="o">{esc(r["outcome"] or "—")} · {esc(r["source"])} · {esc(r["status"])} · {t("회수", "Recovered")} {money(r["recovered"])}</div></div>'
         f'<div class="v">{t("이득", "Gain") if r["pnl"] >= 0 else t("손실", "Loss")} {signed_money(r["pnl"])}</div>'
         f'</div>'
         for r in _rp_completed
@@ -5287,6 +5441,9 @@ _rp_sub = (
     if _rp_has_data else
     t("지갑 API 요약 대기 중", "Waiting for wallet API summary")
 )
+_rp_holdings_count_text = f'{len(_rp_visible_portfolio)}/{len(_rp_portfolio)}'
+if _rp_hidden_holdings:
+    _rp_holdings_count_text += t(f" · {_rp_hidden_holdings}숨김", f" · {_rp_hidden_holdings} hidden")
 _rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
 _sync_meta = st.session_state.get("api_sync_meta", {}) or {}
 _sync_status = str(_sync_meta.get("status", "") or "")
@@ -5330,7 +5487,8 @@ st.markdown(
     f'<div class="portfolio-mini-cell"><div class="k">{t("포지션 평가금", "Position value")}</div><div class="v">{money(_rp_pos_value)}</div></div>'
     f'<div class="portfolio-mini-cell"><div class="k">{t("노출 비중", "Exposure")}</div><div class="v">{_rp_exposure_pct:.1f}%</div></div>'
     f'</div>'
-    f'<div class="portfolio-section-head"><div class="k">{t("보유종목", "Holdings")}</div><div class="v">{len(_rp_portfolio)}</div></div>'
+    f'{_rp_today_html}'
+    f'<div class="portfolio-section-head"><div class="k">{t("보유종목", "Holdings")}</div><div class="v">{esc(_rp_holdings_count_text)}</div></div>'
     f'<div class="portfolio-position-list">{_rp_holdings_html}</div>'
     f'<div class="portfolio-section-head"><div class="k">{t("최근 완료 거래", "Recent completed")}</div><div class="v">{len(_rp_completed)}/5 · {signed_money(_rp_completed_total)}</div></div>'
     f'<div class="portfolio-completed-list">{_rp_completed_html}</div>'
