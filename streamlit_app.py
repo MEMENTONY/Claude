@@ -2284,14 +2284,63 @@ def _safe_float(v, default=0.0):
         return default
 
 
+def _activity_time_value(it):
+    if not isinstance(it, dict):
+        return None
+    return (it.get("timestamp") or it.get("createdAt") or it.get("created_at") or
+            it.get("date") or it.get("time") or it.get("updatedAt"))
+
+
 def _activity_dt(v):
+    if isinstance(v, str) and v.strip():
+        s = v.strip()
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                # Public APIs usually emit naive createdAt values in UTC.
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone(timedelta(hours=9))).isoformat()
+        except Exception:
+            pass
+
     ts = _safe_float(v, 0)
     if ts <= 0:
-        return datetime.now().isoformat()
+        return datetime.now(timezone(timedelta(hours=9))).isoformat()
     if ts > 10_000_000_000:  # milliseconds
         ts = ts / 1000
     # Polymarket timestamps are UTC; display in Korea time for journal grouping.
-    return (datetime.utcfromtimestamp(ts) + timedelta(hours=9)).isoformat()
+    return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(timezone(timedelta(hours=9))).isoformat()
+
+
+def _activity_action(it):
+    if not isinstance(it, dict):
+        return ""
+    side = str(it.get("side") or "").upper()
+    typ = str(it.get("type") or it.get("activityType") or it.get("eventType") or "").upper()
+    if side in ("BUY", "SELL"):
+        return side
+    if typ in ("BUY", "BOUGHT"):
+        return "BUY"
+    if typ in ("SELL", "SOLD"):
+        return "SELL"
+    blob = " ".join(str(it.get(k, "")) for k in ("type", "activityType", "eventType", "side", "action", "label")).lower()
+    if "buy" in blob or "bought" in blob or "매수" in blob:
+        return "BUY"
+    if "sell" in blob or "sold" in blob or "매도" in blob:
+        return "SELL"
+    return ""
+
+
+def _activity_asset(it):
+    if not isinstance(it, dict):
+        return ""
+    for k in ("asset", "assetId", "token_id", "tokenId", "clobTokenId", "conditionId", "market", "marketId"):
+        v = it.get(k)
+        if v:
+            return str(v)
+    title = it.get("title") or it.get("slug") or it.get("eventSlug") or ""
+    outcome = it.get("outcome") or ""
+    return f"{title}|{outcome}" if title or outcome else ""
 
 
 def normalize_activity(raw):
@@ -2303,24 +2352,24 @@ def normalize_activity(raw):
         if not isinstance(it, dict):
             continue
         typ = str(it.get("type", "TRADE")).upper()
-        side = str(it.get("side", "")).upper()
+        side = _activity_action(it)
         # Keep trade-like rows first. Other activity can stay in raw debug.
-        if typ and typ != "TRADE" and side not in ("BUY", "SELL"):
+        if side not in ("BUY", "SELL"):
             continue
-        price_raw = _safe_float(it.get("price"), 0)
+        price_raw = _safe_float(it.get("price") or it.get("pricePerShare") or it.get("avgPrice"), 0)
         price_c = price_raw * 100 if 0 < price_raw <= 1 else price_raw
-        size = _safe_float(it.get("size"), 0)
-        usdc = _safe_float(it.get("usdcSize"), 0)
+        size = _safe_float(it.get("size") or it.get("shares") or it.get("outcomeTokens"), 0)
+        usdc = _safe_float(it.get("usdcSize") or it.get("usdValue") or it.get("amount"), 0)
         amount = usdc if usdc > 0 else size * (price_c / 100 if price_c else 0)
         tx_base = it.get("transactionHash") or it.get("transaction_hash") or it.get("hash") or ""
-        asset = it.get("asset") or it.get("conditionId") or it.get("slug") or ""
-        tx_id = "|".join([str(tx_base), str(asset), str(it.get("timestamp", "")), side, str(size), str(price_raw)])
+        asset = _activity_asset(it)
+        tx_id = "|".join([str(tx_base), str(asset), str(_activity_time_value(it) or ""), side, str(size), str(price_raw)])
         rows.append({
             "tx_id": tx_id,
-            "d": _activity_dt(it.get("timestamp")),
+            "d": _activity_dt(_activity_time_value(it)),
             "name": it.get("title") or it.get("slug") or it.get("eventSlug") or "Polymarket trade",
             "outcome": it.get("outcome", ""),
-            "side": side or typ,
+            "side": side,
             "price": round(price_c, 2),
             "shares": round(size, 4),
             "amount": round(amount, 2),
@@ -2370,7 +2419,7 @@ def normalize_activity_events(raw):
             "result": typ.title() if typ else t("정산", "Settled"),
             "type": typ,
             "label": it.get("status") or it.get("result") or "",
-            "d": _activity_dt(it.get("timestamp") or it.get("createdAt") or it.get("created_at")),
+            "d": _activity_dt(_activity_time_value(it)),
             "tx_id": it.get("transactionHash") or it.get("transaction_hash") or f"activity-event-{idx}",
         })
     return events
@@ -4289,6 +4338,7 @@ with tab4:
             else:
                 try:
                     with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
+                        fetch_wallet_activity.clear()
                         raw = fetch_wallet_activity(a, limit=act_limit)
                     st.session_state.activity_raw = raw
                     st.session_state.activity_events = normalize_activity_events(raw)
@@ -4677,13 +4727,16 @@ with tab_pf:
             else:
                 try:
                     with st.spinner(t("폴리마켓에서 불러오는 중", "Fetching")):
+                        fetch_wallet_positions.clear()
                         items = fetch_wallet_positions(a)
                     st.session_state.wallet_raw = items
                     try:
+                        fetch_wallet_value.clear()
                         st.session_state.pnl_raw = fetch_wallet_value(a)
                     except Exception as _pnl_err:
                         st.session_state.pnl_raw = {"error": str(_pnl_err)}
                     try:
+                        fetch_wallet_activity.clear()
                         activity_raw = fetch_wallet_activity(a, limit=200)
                         st.session_state.activity_raw = activity_raw
                         st.session_state.activity_events = normalize_activity_events(activity_raw)
@@ -5064,7 +5117,10 @@ for _rp_r in _rp_trade_rows:
     _rp_pnl = _display_realized(_rp_r)
     if _rp_pnl is None:
         continue
-    if _display_remaining_shares(_rp_r) > 1e-6:
+    _rp_bought = _safe_float(_rp_r.get("bought_shares"), 0.0)
+    _rp_remaining = _display_remaining_shares(_rp_r)
+    _rp_close_tolerance = max(0.05, _rp_bought * 0.01)
+    if _rp_remaining > _rp_close_tolerance:
         continue
     _rp_latest_dt = _rp_r.get("linked_event_time") or _rp_r.get("latest_dt") or ""
     _rp_latest_obj = parse_trade_datetime({"d": _rp_latest_dt}) if _rp_latest_dt else None
