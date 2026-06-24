@@ -80,8 +80,60 @@ span[data-testid="stIconMaterial"] {
   padding-bottom: 5rem !important;
   overflow: visible !important;
 }
-section[data-testid="stSidebar"] { display: flex !important; width: 21rem !important; min-width: 21rem !important; }
+section[data-testid="stSidebar"] {
+  display: flex !important;
+  width: 21rem !important;
+  min-width: 21rem !important;
+  background: transparent !important;
+}
+section[data-testid="stSidebar"] > div {
+  background: transparent !important;
+  padding: 1.1rem .8rem !important;
+}
 [data-testid="collapsedControl"] { display: flex !important; }
+section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+  background: transparent !important;
+  border: none !important;
+}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+  background: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(233,234,238,.95) !important;
+  border-radius: 22px !important;
+  box-shadow: 0 1px 2px rgba(20,22,30,.04), 0 18px 44px rgba(20,22,30,.08) !important;
+  backdrop-filter: saturate(180%) blur(18px);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  padding: 18px 16px 16px 16px !important;
+}
+.today-goal-kpi {
+  margin: 6px 0 2px 0;
+  padding: 15px 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(20,22,30,.04), 0 14px 34px rgba(20,22,30,.07);
+}
+.today-goal-kpi .k {
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.today-goal-kpi .v {
+  margin-top: 7px;
+  font-size: 31px;
+  font-weight: 780;
+  letter-spacing: -.04em;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.today-goal-kpi .s {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--gray);
+  line-height: 1.45;
+}
 .stApp, .main, div[data-testid="stAppViewContainer"] { overflow: visible !important; }
 header[data-testid="stHeader"] {
   background: rgba(251,251,252,.82) !important;
@@ -3360,40 +3412,43 @@ exp_limit_ = min(blk_ * 2, 50)
 
 # ---- 좌측 사이드바: 오늘 운용 기준 ----
 with st.sidebar:
-    st.markdown(f'<div class="eyebrow">{t("오늘 운용 기준", "Today’s operating limits")}</div>',
-                unsafe_allow_html=True)
-
     st.session_state.setdefault("today_start_cash", float(eb_ or 0.0))
     st.session_state.setdefault("today_stop_loss_amount", 0.0)
     st.session_state.setdefault("today_goal_mode", "percent")
     st.session_state.setdefault("today_goal_pct", 3.0)
     st.session_state.setdefault("today_goal_amount", 0.0)
 
-    start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
-                                 min_value=0.0, key="today_start_cash")
-    st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
-                    min_value=0.0, key="today_stop_loss_amount")
+    with st.container(border=True):
+        st.markdown(f'<div class="eyebrow" style="margin-top:0;">{t("오늘 운용 기준", "Today’s operating limits")}</div>',
+                    unsafe_allow_html=True)
 
-    goal_mode = st.radio(
-        t("목표 금액 입력 방식", "Goal input"),
-        ["percent", "amount"],
-        format_func=lambda mo: t("시작 현금의 %", "% of start cash") if mo == "percent" else t("직접 입력 ($)", "Direct ($)"),
-        key="today_goal_mode", horizontal=True,
-    )
-    if goal_mode == "percent":
-        goal_pct = st.number_input(t("목표 (시작 현금의 %)", "Goal (% of start cash)"),
-                                   min_value=0.0, key="today_goal_pct")
-        goal_amount = start_cash * goal_pct / 100.0
-    else:
-        goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
-                                      min_value=0.0, key="today_goal_amount")
-        goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
+        start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
+                                     min_value=0.0, key="today_start_cash")
+        st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
+                        min_value=0.0, key="today_stop_loss_amount")
 
-    st.markdown(
-        f'<div class="footnote">'
-        + t(f"목표 금액 {money(goal_amount)} · 시작 현금의 {goal_pct:.1f}%",
-            f"Goal {money(goal_amount)} · {goal_pct:.1f}% of start cash")
-        + '</div>', unsafe_allow_html=True)
+        goal_mode = st.radio(
+            t("목표 금액 입력 방식", "Goal input"),
+            ["percent", "amount"],
+            format_func=lambda mo: t("시작 현금의 %", "% of start cash") if mo == "percent" else t("직접 입력 ($)", "Direct ($)"),
+            key="today_goal_mode", horizontal=True,
+        )
+        if goal_mode == "percent":
+            goal_pct = st.number_input(t("목표 (시작 현금의 %)", "Goal (% of start cash)"),
+                                       min_value=0.0, key="today_goal_pct")
+            goal_amount = start_cash * goal_pct / 100.0
+        else:
+            goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
+                                          min_value=0.0, key="today_goal_amount")
+            goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
+
+        st.markdown(
+            f'<div class="today-goal-kpi">'
+            f'<div class="k">{t("목표 금액", "Goal amount")}</div>'
+            f'<div class="v">{money(goal_amount)}</div>'
+            f'<div class="s">{t(f"시작 현금의 {goal_pct:.1f}%", f"{goal_pct:.1f}% of start cash")}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
 
 tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
