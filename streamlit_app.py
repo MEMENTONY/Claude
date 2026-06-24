@@ -167,6 +167,8 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
   backdrop-filter: saturate(180%) blur(22px);
   -webkit-backdrop-filter: saturate(180%) blur(22px);
   padding: 18px 16px 16px 16px;
+  max-height: calc(100vh - 98px);
+  overflow-y: auto;
 }
 .portfolio-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom: 14px; }
 .portfolio-panel-title { font-size: 15px; font-weight: 780; letter-spacing: -.02em; line-height: 1.2; }
@@ -217,6 +219,33 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
   border: 1px dashed rgba(162,165,175,.45); font-size: 12.5px; color: var(--gray);
   line-height: 1.55; text-align:center;
 }
+.portfolio-section-head {
+  display:flex; justify-content:space-between; align-items:center; gap: 10px;
+  margin: 13px 0 8px 0;
+}
+.portfolio-section-head .k {
+  font-size: 11px; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; color: var(--gray);
+}
+.portfolio-section-head .v { font-size: 11.5px; font-weight: 720; color: var(--gray2); }
+.portfolio-more {
+  padding: 2px 4px 0 4px; font-size: 11.5px; color: var(--gray2); text-align:center;
+}
+.portfolio-completed-list { display:flex; flex-direction:column; gap: 7px; margin-top: 8px; }
+.portfolio-completed-row {
+  display:grid; grid-template-columns: 1fr auto; gap: 10px; align-items:center;
+  padding: 10px 10px; border-radius: 16px; background: rgba(255,255,255,.68);
+  border: 1px solid rgba(233,234,238,.9);
+}
+.portfolio-completed-row.g { border-color: rgba(15,122,67,.16); background: rgba(231,245,236,.72); }
+.portfolio-completed-row.b { border-color: rgba(197,54,47,.16); background: rgba(253,238,237,.72); }
+.portfolio-completed-row .n {
+  font-size: 12px; font-weight: 720; color: var(--ink2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.portfolio-completed-row .o { margin-top: 3px; font-size: 11px; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.portfolio-completed-row .v { font-size: 13px; font-weight: 790; font-variant-numeric: tabular-nums; }
+.portfolio-completed-row.g .v { color: var(--green); }
+.portfolio-completed-row.b .v { color: var(--red); }
 @media (min-width: 1380px) {
   .block-container { margin-right: 22.5rem !important; }
 }
@@ -790,6 +819,7 @@ DEFAULTS = {
     "ai_text": "", "ai_error": "", "ai_prompt": "", "ai_pair": "",
     "wallet_raw": [],
     "activity_raw": [],
+    "activity_events": [],
     "auto_trades": [],
     "wallet_addr": "",
     "imported_tx_ids": [],
@@ -2300,6 +2330,52 @@ def normalize_activity(raw):
     return rows
 
 
+def normalize_activity_events(raw):
+    """Extract settlement/redemption/loss-like API activity rows for realized P&L matching."""
+    events = []
+    if not isinstance(raw, list):
+        return events
+    for idx, it in enumerate(raw):
+        if not isinstance(it, dict):
+            continue
+        typ = str(it.get("type") or it.get("activityType") or it.get("eventType") or "").upper()
+        side = str(it.get("side") or "").upper()
+        blob = " ".join(str(it.get(k, "")) for k in ("type", "activityType", "eventType", "title", "slug", "eventSlug", "outcome", "status", "result")).lower()
+        is_event = (
+            side not in ("BUY", "SELL")
+            and any(k in blob for k in ("redeem", "redemption", "settle", "settled", "claim", "claimed", "loss", "lost", "won", "win", "profit"))
+        )
+        if not is_event and typ not in ("REDEEM", "REDEMPTION", "SETTLE", "SETTLED", "CLAIM", "CLAIMED", "LOSS", "PROFIT"):
+            continue
+
+        amt = (
+            it.get("usdcSize")
+            or it.get("usdValue")
+            or it.get("amount")
+            or it.get("payout")
+            or it.get("proceeds")
+            or it.get("value")
+            or ""
+        )
+        amount = ""
+        if amt != "":
+            amount = money(_safe_float(amt, 0.0))
+
+        events.append({
+            "name": it.get("title") or it.get("slug") or it.get("eventSlug") or t("알 수 없는 시장", "Unknown market"),
+            "outcome": it.get("outcome", ""),
+            "price": _as_cents(it.get("price")) if it.get("price") is not None else None,
+            "shares": _safe_float(it.get("size") or it.get("shares"), 0.0) or None,
+            "amount": amount,
+            "result": typ.title() if typ else t("정산", "Settled"),
+            "type": typ,
+            "label": it.get("status") or it.get("result") or "",
+            "d": _activity_dt(it.get("timestamp") or it.get("createdAt") or it.get("created_at")),
+            "tx_id": it.get("transactionHash") or it.get("transaction_hash") or f"activity-event-{idx}",
+        })
+    return events
+
+
 def merge_activity_into_log(items):
     """Merge API trades into auto_trades without duplicating existing rows."""
     if not isinstance(st.session_state.imported_tx_ids, list):
@@ -2867,7 +2943,7 @@ def _event_kind(ev):
     raw = f"{ev.get('result', '')} {ev.get('type', '')} {ev.get('label', '')}".lower()
     if any(k in raw for k in ("손실", "loss", "lost")):
         return "loss"
-    if any(k in raw for k in ("상환", "수익", "redeem", "redemption", "profit", "won", "win")):
+    if any(k in raw for k in ("상환", "수익", "redeem", "redemption", "claim", "claimed", "profit", "won", "win")):
         return "redeem"
     if any(k in raw for k in ("정산", "settle", "settled")):
         return "settled"
@@ -4215,6 +4291,7 @@ with tab4:
                     with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
                         raw = fetch_wallet_activity(a, limit=act_limit)
                     st.session_state.activity_raw = raw
+                    st.session_state.activity_events = normalize_activity_events(raw)
                     items = sort_trades_newest_first(normalize_activity(raw))
                     added = merge_activity_into_log(items)
                     st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
@@ -4606,6 +4683,20 @@ with tab_pf:
                         st.session_state.pnl_raw = fetch_wallet_value(a)
                     except Exception as _pnl_err:
                         st.session_state.pnl_raw = {"error": str(_pnl_err)}
+                    try:
+                        activity_raw = fetch_wallet_activity(a, limit=200)
+                        st.session_state.activity_raw = activity_raw
+                        st.session_state.activity_events = normalize_activity_events(activity_raw)
+                        activity_items = sort_trades_newest_first(normalize_activity(activity_raw))
+                        merge_activity_into_log(activity_items)
+                        st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
+                    except Exception as _activity_err:
+                        st.session_state.activity_events = st.session_state.get("activity_events", [])
+                        st.session_state.activity_raw = st.session_state.get("activity_raw", [])
+                        st.session_state.pnl_raw = {
+                            **(st.session_state.pnl_raw if isinstance(st.session_state.pnl_raw, dict) else {}),
+                            "activity_error": str(_activity_err),
+                        }
                     open_items = [it for it in items if is_open_position(it)] if isinstance(items, list) else []
                     st.session_state.portfolio = [dict(
                         name=it.get("title") or "Polymarket position",
@@ -4875,6 +4966,7 @@ with tab_set:
                   "portfolio": st.session_state.portfolio, "trade_log": st.session_state.trade_log,
                   "auto_trades": st.session_state.auto_trades, "wallet_addr": st.session_state.wallet_addr,
                   "imported_tx_ids": st.session_state.imported_tx_ids,
+                  "activity_events": st.session_state.get("activity_events", []),
                   "watchlist": st.session_state.watchlist, "order_candidates": st.session_state.order_candidates,
                   "pnl_raw": st.session_state.pnl_raw, "profile_pnl": st.session_state.profile_pnl,
                   "explore_url": st.session_state.explore_url, "explore_markets": st.session_state.explore_markets,
@@ -4903,6 +4995,7 @@ with tab_set:
                 st.session_state.auto_trades = data.get("auto_trades", [])
                 st.session_state.wallet_addr = data.get("wallet_addr", "")
                 st.session_state.imported_tx_ids = data.get("imported_tx_ids", [])
+                st.session_state.activity_events = data.get("activity_events", st.session_state.get("activity_events", []))
                 st.session_state.watchlist = data.get("watchlist", [])
                 st.session_state.order_candidates = data.get("order_candidates", [])
                 st.session_state.pnl_raw = data.get("pnl_raw", {})
@@ -4939,10 +5032,12 @@ for _rp_p in _rp_portfolio:
         continue
     _rp_value = _safe_float(_rp_p.get("shares"), 0.0) * (_safe_float(_rp_p.get("cur"), 0.0) / 100.0)
     _rp_rows.append((_rp_value, _rp_p))
-_rp_rows = sorted(_rp_rows, key=lambda x: x[0], reverse=True)[:3]
+_rp_rows_all = sorted(_rp_rows, key=lambda x: x[0], reverse=True)
+_rp_rows = _rp_rows_all[:5]
+_rp_more_holdings = max(len(_rp_rows_all) - len(_rp_rows), 0)
 
 if _rp_rows:
-    _rp_position_html = "".join(
+    _rp_holdings_html = "".join(
         f'<div class="portfolio-position-row">'
         f'<div><div class="n">{esc(p.get("name", "") or t("이름 없는 포지션", "Unnamed position"))}</div>'
         f'<div class="o">{esc(p.get("outcome", "") or "—")} · {cents(_safe_float(p.get("cur"), 0.0))}</div></div>'
@@ -4950,10 +5045,55 @@ if _rp_rows:
         f'</div>'
         for value, p in _rp_rows
     )
+    if _rp_more_holdings:
+        _rp_holdings_html += f'<div class="portfolio-more">{t(f"외 {_rp_more_holdings}개 더", f"+{_rp_more_holdings} more")}</div>'
 else:
-    _rp_position_html = (
+    _rp_holdings_html = (
         f'<div class="portfolio-empty">'
         f'{t("포트폴리오 탭에서 지갑 주소를 불러오면 여기에 요약이 표시됩니다.", "Import a wallet in the Portfolio tab to show a summary here.")}'
+        f'</div>'
+    )
+
+_rp_trade_rows = group_auto_trades_for_pnl(st.session_state.get("auto_trades", []))
+_rp_activity_events = st.session_state.get("activity_events", []) or []
+if _rp_activity_events:
+    _rp_trade_rows = link_settlement_events_to_trade_groups(_rp_trade_rows, _rp_activity_events)
+
+_rp_completed = []
+for _rp_r in _rp_trade_rows:
+    _rp_pnl = _display_realized(_rp_r)
+    if _rp_pnl is None:
+        continue
+    if _display_remaining_shares(_rp_r) > 1e-6:
+        continue
+    _rp_latest_dt = _rp_r.get("linked_event_time") or _rp_r.get("latest_dt") or ""
+    _rp_latest_obj = parse_trade_datetime({"d": _rp_latest_dt}) if _rp_latest_dt else None
+    _rp_completed.append({
+        "market": _rp_r.get("market", ""),
+        "outcome": _rp_r.get("outcome", ""),
+        "status": _rp_r.get("adjusted_status") or _rp_r.get("status", ""),
+        "pnl": _safe_float(_rp_pnl, 0.0),
+        "recovered": _safe_float(_rp_r.get("adjusted_effective_proceeds", _rp_r.get("sell_proceeds")), 0.0),
+        "cost": _safe_float(_rp_r.get("buy_cost"), 0.0),
+        "latest_dt": _rp_latest_dt,
+        "_latest_ts": _rp_latest_obj.timestamp() if _rp_latest_obj else _safe_float(_rp_r.get("_latest_ts"), -1.0),
+    })
+_rp_completed = sorted(_rp_completed, key=lambda r: r.get("_latest_ts", -1.0), reverse=True)[:5]
+_rp_completed_total = sum(_safe_float(r.get("pnl"), 0.0) for r in _rp_completed)
+
+if _rp_completed:
+    _rp_completed_html = "".join(
+        f'<div class="portfolio-completed-row {"g" if r["pnl"] >= 0 else "b"}">'
+        f'<div><div class="n">{esc(r["market"] or t("이름 없는 거래", "Unnamed trade"))}</div>'
+        f'<div class="o">{esc(r["outcome"] or "—")} · {esc(r["status"])} · {t("회수", "Recovered")} {money(r["recovered"])}</div></div>'
+        f'<div class="v">{t("이득", "Gain") if r["pnl"] >= 0 else t("손실", "Loss")} {signed_money(r["pnl"])}</div>'
+        f'</div>'
+        for r in _rp_completed
+    )
+else:
+    _rp_completed_html = (
+        f'<div class="portfolio-empty">'
+        f'{t("최근 완료된 매수/매도·상환 짝을 아직 찾지 못했습니다.", "No recent completed buy/sell or redemption matches yet.")}'
         f'</div>'
     )
 
@@ -4982,8 +5122,10 @@ st.markdown(
     f'<div class="portfolio-mini-cell"><div class="k">{t("포지션 평가금", "Position value")}</div><div class="v">{money(_rp_pos_value)}</div></div>'
     f'<div class="portfolio-mini-cell"><div class="k">{t("노출 비중", "Exposure")}</div><div class="v">{_rp_exposure_pct:.1f}%</div></div>'
     f'</div>'
-    f'<div class="today-control-label">{t("상위 보유", "Top holdings")}</div>'
-    f'<div class="portfolio-position-list">{_rp_position_html}</div>'
+    f'<div class="portfolio-section-head"><div class="k">{t("보유종목", "Holdings")}</div><div class="v">{len(_rp_portfolio)}</div></div>'
+    f'<div class="portfolio-position-list">{_rp_holdings_html}</div>'
+    f'<div class="portfolio-section-head"><div class="k">{t("최근 완료 거래", "Recent completed")}</div><div class="v">{len(_rp_completed)}/5 · {signed_money(_rp_completed_total)}</div></div>'
+    f'<div class="portfolio-completed-list">{_rp_completed_html}</div>'
     f'</div>'
     f'</div>',
     unsafe_allow_html=True,
