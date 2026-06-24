@@ -17,7 +17,7 @@ st.set_page_config(
     page_title="Memento",
     page_icon="◆",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -80,7 +80,8 @@ span[data-testid="stIconMaterial"] {
   padding-bottom: 5rem !important;
   overflow: visible !important;
 }
-section[data-testid="stSidebar"] { display: none; }
+section[data-testid="stSidebar"] { display: flex !important; width: 21rem !important; min-width: 21rem !important; }
+[data-testid="collapsedControl"] { display: flex !important; }
 .stApp, .main, div[data-testid="stAppViewContainer"] { overflow: visible !important; }
 header[data-testid="stHeader"] {
   background: rgba(251,251,252,.82) !important;
@@ -3351,18 +3352,48 @@ with mh_r:
 if st.session_state.profile is None:
     st.session_state.profile = dict(DEFAULT_PROFILE)
 
-# Slim risk chip under the masthead — only the numbers that drive a decision.
+# 리스크 임계값은 다른 탭(설정·포트폴리오)에서 쓰이므로 변수는 유지하되, 칩 표시는 제거함.
 prof = profile()
 g_, c1_, c2_, blk_ = size_thresholds()
 eb_ = effective_bankroll()
 exp_limit_ = min(blk_ * 2, 50)
-st.markdown(
-    f'<div class="mh-chip">'
-    f'{t("총자산", "Bankroll")} <b>{money(eb_)}</b>'
-    f' · {t("적정", "comfort")} {g_:.0f}% ({money(eb_*g_/100)})'
-    f' · {t("진입 금지", "block")} {blk_:.0f}% ({money(eb_*blk_/100)})'
-    f' · {t("감정 한도", "emotion cap")} {money(prof["emotional_limit"])}</div>',
-    unsafe_allow_html=True)
+
+# ---- 좌측 사이드바: 오늘 운용 기준 ----
+with st.sidebar:
+    st.markdown(f'<div class="eyebrow">{t("오늘 운용 기준", "Today’s operating limits")}</div>',
+                unsafe_allow_html=True)
+
+    st.session_state.setdefault("today_start_cash", float(eb_ or 0.0))
+    st.session_state.setdefault("today_stop_loss_amount", 0.0)
+    st.session_state.setdefault("today_goal_mode", "percent")
+    st.session_state.setdefault("today_goal_pct", 3.0)
+    st.session_state.setdefault("today_goal_amount", 0.0)
+
+    start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
+                                 min_value=0.0, key="today_start_cash")
+    st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
+                    min_value=0.0, key="today_stop_loss_amount")
+
+    goal_mode = st.radio(
+        t("목표 금액 입력 방식", "Goal input"),
+        ["percent", "amount"],
+        format_func=lambda mo: t("시작 현금의 %", "% of start cash") if mo == "percent" else t("직접 입력 ($)", "Direct ($)"),
+        key="today_goal_mode", horizontal=True,
+    )
+    if goal_mode == "percent":
+        goal_pct = st.number_input(t("목표 (시작 현금의 %)", "Goal (% of start cash)"),
+                                   min_value=0.0, key="today_goal_pct")
+        goal_amount = start_cash * goal_pct / 100.0
+    else:
+        goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
+                                      min_value=0.0, key="today_goal_amount")
+        goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
+
+    st.markdown(
+        f'<div class="footnote">'
+        + t(f"목표 금액 {money(goal_amount)} · 시작 현금의 {goal_pct:.1f}%",
+            f"Goal {money(goal_amount)} · {goal_pct:.1f}% of start cash")
+        + '</div>', unsafe_allow_html=True)
 
 tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
