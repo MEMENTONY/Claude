@@ -849,6 +849,8 @@ DEFAULT_PROFILE = {
 
 DEFAULTS = {
     "lang": "ko",
+    "display_currency": "USD",
+    "usd_krw_rate": 1400.0,
     "profile": dict(DEFAULT_PROFILE),  # default risk profile; no onboarding gate
     "last_entry": None,
     "trade_log": [],
@@ -888,6 +890,7 @@ DEFAULTS = {
     "today_anchor_label": "",
     "today_anchor_time": "",
     "today_anchor_set_at": "",
+    "today_stop_loss_gross_only": False,
     "paste_trades": [],
     "paste_events": [],
     "paste_unparsed": [],
@@ -928,6 +931,12 @@ if st.session_state.get("side_panel_mode") not in ("panels", "focus"):
     st.session_state.side_panel_mode = "panels"
 if st.session_state.get("side_panel_section") not in ("today", "portfolio"):
     st.session_state.side_panel_section = "today"
+if st.session_state.get("display_currency") not in ("USD", "KRW"):
+    st.session_state.display_currency = "USD"
+try:
+    st.session_state.usd_krw_rate = max(float(st.session_state.get("usd_krw_rate", 1400.0) or 1400.0), 1.0)
+except (TypeError, ValueError):
+    st.session_state.usd_krw_rate = 1400.0
 try:
     st.session_state.side_panel_trade_limit = max(int(st.session_state.get("side_panel_trade_limit", 5) or 5), 5)
 except (TypeError, ValueError):
@@ -1163,11 +1172,29 @@ def profile():
 def clamp(v, lo=0, hi=100):
     return max(lo, min(hi, v))
 
+def _display_money_value(v):
+    try:
+        amount = float(v or 0.0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    if st.session_state.get("display_currency", "USD") == "KRW":
+        rate = max(float(st.session_state.get("usd_krw_rate", 1400.0) or 1400.0), 1.0)
+        return amount * rate, "KRW"
+    return amount, "USD"
+
 def money(v):
-    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
+    amount, currency = _display_money_value(v)
+    sign = "-" if amount < 0 else ""
+    if currency == "KRW":
+        return f"{sign}₩{abs(amount):,.0f}"
+    return f"{sign}${abs(amount):,.2f}"
 
 def signed_money(v):
-    return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
+    amount, currency = _display_money_value(v)
+    sign = "+" if amount >= 0 else "-"
+    if currency == "KRW":
+        return f"{sign}₩{abs(amount):,.0f}"
+    return f"{sign}${abs(amount):,.2f}"
 
 def signed_pct(v):
     return f"+{v:.1f}%" if v >= 0 else f"{v:.1f}%"
@@ -4026,6 +4053,36 @@ def recent_completed_trade_rows(limit=None):
     return completed[:max(int(limit or 0), 0)]
 
 
+def today_anchor_timestamp():
+    """Timestamp for the selected operating anchor, if one has been stored."""
+    raw = str(st.session_state.get("today_anchor_time") or "").strip()
+    if not raw:
+        return None
+    dt = parse_trade_datetime({"d": raw})
+    return dt.timestamp() if dt else None
+
+
+def today_realized_loss_since_anchor():
+    """Gross realized losses since the anchor; used for conservative stop-loss mode."""
+    rows = recent_completed_trade_rows(limit=None)
+    anchor_ts = today_anchor_timestamp()
+    today_kst = datetime.now(KST).date()
+    gross_loss = 0.0
+    for row in rows:
+        pnl = _safe_float(row.get("pnl"), 0.0)
+        if pnl >= 0:
+            continue
+        row_ts = _safe_float(row.get("_latest_ts"), -1.0)
+        if anchor_ts is not None:
+            include = row_ts >= anchor_ts - 1e-6
+        else:
+            dt = parse_trade_datetime({"d": row.get("latest_dt")})
+            include = bool(dt and dt.date() == today_kst)
+        if include:
+            gross_loss += abs(pnl)
+    return gross_loss
+
+
 def today_operating_metrics(current_assets=None):
     """Compute the top dashboard values from the current portfolio and today controls."""
     assets = current_portfolio_assets()
@@ -4046,9 +4103,12 @@ def today_operating_metrics(current_assets=None):
     pnl = current_total - start if start > 0 else 0.0
     gain = max(pnl, 0.0)
     loss = max(-pnl, 0.0)
+    gross_realized_loss = today_realized_loss_since_anchor()
+    stop_loss_gross_only = bool(st.session_state.get("today_stop_loss_gross_only", False))
+    stop_loss_used = gross_realized_loss if stop_loss_gross_only else loss
     goal_progress = (gain / goal_amount * 100.0) if goal_amount > 0 else 0.0
-    stop_progress = (loss / stop * 100.0) if stop > 0 else 0.0
-    loss_pct = (loss / start * 100.0) if start > 0 else 0.0
+    stop_progress = (stop_loss_used / stop * 100.0) if stop > 0 else 0.0
+    loss_pct = (stop_loss_used / start * 100.0) if start > 0 else 0.0
     anchor_mode = st.session_state.get("today_anchor_mode", "next")
     anchor_label = str(st.session_state.get("today_anchor_label") or "").strip()
     if not anchor_label:
@@ -4063,8 +4123,11 @@ def today_operating_metrics(current_assets=None):
         "pnl": pnl,
         "gain": gain,
         "loss": loss,
+        "gross_realized_loss": gross_realized_loss,
+        "stop_loss_used": stop_loss_used,
+        "stop_loss_gross_only": stop_loss_gross_only,
         "goal_left": max(goal_amount - gain, 0.0),
-        "stop_left": max(stop - loss, 0.0) if stop > 0 else 0.0,
+        "stop_left": max(stop - stop_loss_used, 0.0) if stop > 0 else 0.0,
         "goal_progress": goal_progress,
         "goal_progress_bar": clamp(goal_progress, 0, 100),
         "stop_progress": stop_progress,
@@ -4089,6 +4152,7 @@ def today_dashboard_html(metrics):
     goal_left_text = t(f"남은 목표 {money(metrics['goal_left'])}",
                        f"{money(metrics['goal_left'])} left")
     loss_label = t("손실", "lost")
+    stop_mode_text = t("손실만", "loss-only") if metrics.get("stop_loss_gross_only") else t("순손익", "net")
     stop_left_text = t(f"중단까지 {money(metrics['stop_left'])}",
                        f"{money(metrics['stop_left'])} to stop")
     anchor_text = t(f"시작 {money(metrics['start'])} · {anchor_time}",
@@ -4108,8 +4172,8 @@ def today_dashboard_html(metrics):
         f'</div>'
         f'<div class="today-dash-cell {stop_cls}">'
         f'<div class="k">{t("손실 중단선", "Stop-loss line")}</div>'
-        f'<div class="v">{money(metrics["loss"])} · {metrics["loss_pct"]:.1f}% {loss_label}</div>'
-        f'<div class="s">{esc(stop_left_text)}</div>'
+        f'<div class="v">{money(metrics["stop_loss_used"])} · {metrics["loss_pct"]:.1f}% {loss_label}</div>'
+        f'<div class="s">{esc(stop_mode_text)} · {esc(stop_left_text)}</div>'
         f'<div class="today-progress-track"><div class="today-progress-fill loss" style="width:{metrics["stop_progress_bar"]:.1f}%"></div></div>'
         f'</div>'
         f'<div class="today-dash-cell">'
@@ -4178,11 +4242,12 @@ def portfolio_side_panel_html():
         _rp_today_goal = _rp_today_start * _rp_today_goal_pct / 100.0
     else:
         _rp_today_goal = _safe_float(st.session_state.get("today_goal_amount"), 0.0)
-    _rp_today_pnl = _rp_total - _rp_today_start
-    _rp_today_gain = max(_rp_today_pnl, 0.0)
-    _rp_today_loss = max(-_rp_today_pnl, 0.0)
-    _rp_today_goal_left = max(_rp_today_goal - _rp_today_gain, 0.0)
-    _rp_today_stop_left = max(_rp_today_stop - _rp_today_loss, 0.0) if _rp_today_stop > 0 else 0.0
+    _rp_today_metrics = today_operating_metrics(_rp_total)
+    _rp_today_pnl = _rp_today_metrics["pnl"]
+    _rp_today_gain = _rp_today_metrics["gain"]
+    _rp_today_loss = _rp_today_metrics["stop_loss_used"]
+    _rp_today_goal_left = _rp_today_metrics["goal_left"]
+    _rp_today_stop_left = _rp_today_metrics["stop_left"]
     if _rp_today_start <= 0:
         _rp_today_kind = "i"
         _rp_today_title = t("시작 기준 필요", "Set start basis")
@@ -4298,7 +4363,7 @@ def portfolio_side_panel_html():
 # =====================================================
 # Masthead + language
 # =====================================================
-mh_l, mh_r = st.columns([4, 1])
+mh_l, mh_r = st.columns([3.25, 1.75])
 with mh_l:
     st.markdown(
         f"""<div class="masthead">
@@ -4306,13 +4371,21 @@ with mh_l:
 <div class="tag">{t("폴리마켓 진입 판단 터미널", "Polymarket entry-decision terminal")}</div>
 </div>""", unsafe_allow_html=True)
 with mh_r:
-    lang_choice = st.radio("lang", ["한국어", "English"],
-                           index=0 if st.session_state.lang == "ko" else 1,
-                           horizontal=True, label_visibility="collapsed")
-    new_lang = "ko" if lang_choice == "한국어" else "en"
-    if new_lang != st.session_state.lang:
-        st.session_state.lang = new_lang
-        st.rerun()
+    lang_col, currency_col = st.columns([1.15, .85])
+    with lang_col:
+        lang_choice = st.radio("lang", ["한국어", "English"],
+                               index=0 if st.session_state.lang == "ko" else 1,
+                               horizontal=True, label_visibility="collapsed")
+        new_lang = "ko" if lang_choice == "한국어" else "en"
+        if new_lang != st.session_state.lang:
+            st.session_state.lang = new_lang
+            st.rerun()
+    with currency_col:
+        st.radio("currency", ["USD", "KRW"], horizontal=True,
+                 key="display_currency", label_visibility="collapsed")
+    if st.session_state.get("display_currency") == "KRW":
+        st.number_input(t("환율 ₩/$", "FX ₩/$"), min_value=1.0, step=10.0,
+                        format="%.0f", key="usd_krw_rate")
 
 # The app opens directly with a safe default risk profile; no onboarding gate.
 # Users can adjust bankroll/risk settings later in Settings · tools.
@@ -4343,7 +4416,7 @@ with st.sidebar:
         st.radio(
             t("패널", "Panel"),
             ["today", "portfolio"],
-            format_func=lambda section: t("오늘", "Today") if section == "today" else t("포트폴리오", "Portfolio"),
+            format_func=lambda section: t("운용기준", "Limits") if section == "today" else t("포트폴리오", "Portfolio"),
             horizontal=True,
             key="side_panel_section",
             label_visibility="collapsed",
@@ -4402,7 +4475,8 @@ with st.sidebar:
         panel_status_title = t("손실 관리 중", "Managing loss")
         panel_status_body = t(f"현재 손실 {money(panel_loss)} · 중단선까지 {money(panel_stop_left)}", f"Loss {money(panel_loss)} · {money(panel_stop_left)} to stop.")
 
-    with st.container(border=True):
+    today_panel_slot = st.empty()
+    with today_panel_slot.container(border=True):
         st.markdown(
             f'<div class="today-panel">'
             f'<div class="today-panel-head">'
@@ -4420,6 +4494,12 @@ with st.sidebar:
             unsafe_allow_html=True)
 
         if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), use_container_width=True, key="sync_today_start_from_portfolio"):
+            now_label = datetime.now(KST).isoformat(timespec="minutes")
+            st.session_state.today_anchor_mode = "next"
+            st.session_state.today_anchor_key = ""
+            st.session_state.today_anchor_label = t("현재 포트폴리오 기준", "Current portfolio basis")
+            st.session_state.today_anchor_time = now_label
+            st.session_state.today_anchor_set_at = now_label
             st.session_state.today_start_cash = float(panel_current_assets)
             st.rerun()
 
@@ -4427,6 +4507,10 @@ with st.sidebar:
                                      min_value=0.0, key="today_start_cash")
         st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
                         min_value=0.0, key="today_stop_loss_amount")
+        st.checkbox(
+            t("손실만 기준으로 보기 (이익 합치기 X)", "Use loss-only stop (ignore gains)"),
+            key="today_stop_loss_gross_only",
+        )
 
         goal_mode = st.radio(
             t("목표 금액 입력 방식", "Goal input"),
@@ -4449,8 +4533,7 @@ with st.sidebar:
         st.markdown(f'<div class="today-anchor-note">{esc(anchor_note)}</div>', unsafe_allow_html=True)
 
         st.markdown(f'<div class="today-control-label">{t("오늘 시작 기준", "Today start anchor")}</div>', unsafe_allow_html=True)
-        anchor_limit = max(int(st.session_state.get("side_panel_trade_limit", 5) or 5), 10)
-        anchor_rows = recent_completed_trade_rows(limit=anchor_limit)
+        anchor_rows = recent_completed_trade_rows(limit=10)
         anchor_by_key = {r["key"]: r for r in anchor_rows}
         anchor_options = ["__next__"] + [r["key"] for r in anchor_rows]
         stored_anchor_key = str(st.session_state.get("today_anchor_key") or "")
@@ -4518,8 +4601,13 @@ with st.sidebar:
                 st.toast(t("선택한 거래를 오늘 운용 기준으로 저장했습니다.", "Saved the selected trade as today's anchor."))
                 st.rerun()
 
-    st.markdown(portfolio_side_panel_html(), unsafe_allow_html=True)
-    if st.session_state.get("side_panel_mode") == "panels" and st.session_state.get("side_panel_section") == "portfolio":
+    show_today_panel = st.session_state.get("side_panel_mode") == "panels" and st.session_state.get("side_panel_section") == "today"
+    show_portfolio_panel = st.session_state.get("side_panel_mode") == "panels" and st.session_state.get("side_panel_section") == "portfolio"
+    if not show_today_panel:
+        today_panel_slot.empty()
+
+    if show_portfolio_panel:
+        st.markdown(portfolio_side_panel_html(), unsafe_allow_html=True)
         side_completed_total = len(recent_completed_trade_rows(limit=None))
         side_limit = max(int(st.session_state.get("side_panel_trade_limit", 5) or 5), 5)
         if side_completed_total > side_limit:
@@ -5944,6 +6032,8 @@ with tab_set:
     bc1, bc2 = st.columns(2)
     with bc1:
         backup = {"profile": st.session_state.profile, "cash": st.session_state.cash,
+                  "display_currency": st.session_state.get("display_currency", "USD"),
+                  "usd_krw_rate": st.session_state.get("usd_krw_rate", 1400.0),
                   "deposits": st.session_state.deposits, "withdrawals": st.session_state.withdrawals,
                   "portfolio": st.session_state.portfolio, "trade_log": st.session_state.trade_log,
                   "auto_trades": st.session_state.auto_trades, "wallet_addr": st.session_state.wallet_addr,
@@ -5955,6 +6045,7 @@ with tab_set:
                   "today_goal_mode": st.session_state.get("today_goal_mode", "percent"),
                   "today_goal_pct": st.session_state.get("today_goal_pct", 3.0),
                   "today_goal_amount": st.session_state.get("today_goal_amount", 0.0),
+                  "today_stop_loss_gross_only": st.session_state.get("today_stop_loss_gross_only", False),
                   "today_anchor_mode": st.session_state.get("today_anchor_mode", "next"),
                   "today_anchor_key": st.session_state.get("today_anchor_key", ""),
                   "today_anchor_label": st.session_state.get("today_anchor_label", ""),
@@ -5981,6 +6072,8 @@ with tab_set:
             try:
                 data = json.loads(up.read().decode("utf-8"))
                 st.session_state.profile = data.get("profile") or st.session_state.profile
+                st.session_state.display_currency = data.get("display_currency", st.session_state.get("display_currency", "USD"))
+                st.session_state.usd_krw_rate = float(data.get("usd_krw_rate", st.session_state.get("usd_krw_rate", 1400.0)) or 1400.0)
                 st.session_state.cash = float(data.get("cash", 0))
                 st.session_state.deposits = float(data.get("deposits", 0))
                 st.session_state.withdrawals = float(data.get("withdrawals", 0))
@@ -5997,6 +6090,7 @@ with tab_set:
                 st.session_state.today_goal_mode = data.get("today_goal_mode", st.session_state.get("today_goal_mode", "percent"))
                 st.session_state.today_goal_pct = float(data.get("today_goal_pct", st.session_state.get("today_goal_pct", 3.0)) or 0.0)
                 st.session_state.today_goal_amount = float(data.get("today_goal_amount", st.session_state.get("today_goal_amount", 0.0)) or 0.0)
+                st.session_state.today_stop_loss_gross_only = bool(data.get("today_stop_loss_gross_only", st.session_state.get("today_stop_loss_gross_only", False)))
                 st.session_state.today_anchor_mode = data.get("today_anchor_mode", st.session_state.get("today_anchor_mode", "next"))
                 st.session_state.today_anchor_key = data.get("today_anchor_key", st.session_state.get("today_anchor_key", ""))
                 st.session_state.today_anchor_label = data.get("today_anchor_label", st.session_state.get("today_anchor_label", ""))
