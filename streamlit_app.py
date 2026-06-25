@@ -999,6 +999,24 @@ for k, v in DEFAULTS.items():
 
 load_local_state()
 
+if not isinstance(st.session_state.get("portfolio"), list):
+    st.session_state.portfolio = []
+else:
+    st.session_state.portfolio = [p for p in st.session_state.portfolio if isinstance(p, dict)]
+if not isinstance(st.session_state.get("portfolio_hidden_keys"), (list, tuple, set)):
+    st.session_state.portfolio_hidden_keys = []
+else:
+    st.session_state.portfolio_hidden_keys = [str(x) for x in st.session_state.get("portfolio_hidden_keys", [])]
+for _num_state_key in (
+    "cash", "deposits", "withdrawals", "adj_month", "adj_year",
+    "today_start_cash", "today_stop_loss_amount", "today_goal_pct",
+    "today_goal_amount", "today_cash_adjustment",
+):
+    try:
+        st.session_state[_num_state_key] = float(st.session_state.get(_num_state_key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        st.session_state[_num_state_key] = 0.0
+
 if st.session_state.get("side_panel_mode") not in ("panels", "focus"):
     st.session_state.side_panel_mode = "panels"
 if st.session_state.get("side_panel_section") not in ("today", "portfolio"):
@@ -4067,23 +4085,41 @@ def portfolio_hidden_summary():
     return total, hidden_count
 
 
-def current_portfolio_assets():
-    """Return the wallet-backed total used by today's operating limits."""
-    portfolio = st.session_state.get("portfolio", []) or []
+def portfolio_asset_summary(portfolio=None, include_hidden=True):
+    """Return cash and position totals; optionally ignore hidden holdings for display panels."""
+    raw_portfolio = portfolio if portfolio is not None else st.session_state.get("portfolio", []) or []
+    if include_hidden:
+        portfolio_rows = [p for p in raw_portfolio if isinstance(p, dict)]
+    else:
+        portfolio_rows = [p for p in visible_portfolio_positions(raw_portfolio) if isinstance(p, dict)]
     cash = _safe_float(st.session_state.get("cash"), 0.0)
     pos_value = sum(
         _safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0)
-        for p in portfolio if isinstance(p, dict)
+        for p in portfolio_rows
     )
-    pos_cost = sum(_safe_float(p.get("inv"), 0.0) for p in portfolio if isinstance(p, dict))
+    pos_cost = sum(_safe_float(p.get("inv"), 0.0) for p in portfolio_rows)
     total = cash + pos_value
     return {
         "cash": cash,
         "position_value": pos_value,
         "position_cost": pos_cost,
         "total": total,
-        "has_basis": bool(portfolio) or cash > 0,
+        "has_basis": bool(portfolio_rows) or cash > 0,
     }
+
+
+def current_portfolio_assets():
+    """Return the full wallet-backed total used by today's operating limits."""
+    return portfolio_asset_summary(include_hidden=True)
+
+
+def sync_portfolio_hidden_checkbox(pkey, cb_key):
+    hidden = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
+    if st.session_state.get(cb_key):
+        hidden.add(str(pkey))
+    else:
+        hidden.discard(str(pkey))
+    st.session_state.portfolio_hidden_keys = list(hidden)
 
 
 def recent_completed_trade_rows(limit=None):
@@ -4275,7 +4311,7 @@ def portfolio_side_panel_html():
     _rp_portfolio = st.session_state.get("portfolio", []) or []
     _rp_visible_portfolio = visible_portfolio_positions(_rp_portfolio)
     _rp_total_holdings, _rp_hidden_holdings = portfolio_hidden_summary()
-    _rp_assets = current_portfolio_assets()
+    _rp_assets = portfolio_asset_summary(_rp_portfolio, include_hidden=False)
     _rp_cash = _rp_assets["cash"]
     _rp_wallet = str(st.session_state.get("wallet_addr", "") or "").strip()
     _rp_pos_value = _rp_assets["position_value"]
@@ -4391,6 +4427,7 @@ def portfolio_side_panel_html():
     _rp_holdings_count_text = f'{len(_rp_visible_portfolio)}/{len(_rp_portfolio)}'
     if _rp_hidden_holdings:
         _rp_holdings_count_text += t(f" · {_rp_hidden_holdings}숨김", f" · {_rp_hidden_holdings} hidden")
+    _rp_total_label = t("표시 자산", "Visible assets") if _rp_hidden_holdings else t("총 자산", "Total assets")
     _rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
     _sync_meta = st.session_state.get("api_sync_meta", {}) or {}
     _sync_status = str(_sync_meta.get("status", "") or "")
@@ -4426,7 +4463,7 @@ def portfolio_side_panel_html():
         f'<div class="portfolio-panel-badge">{_rp_badge}</div>'
         f'</div>'
         f'<div class="portfolio-total-kpi">'
-        f'<div class="k">{t("총 자산", "Total assets")}</div>'
+        f'<div class="k">{_rp_total_label}</div>'
         f'<div class="v">{money(_rp_total)}</div>'
         f'<div class="s">{t(f"미실현 {signed_money(_rp_unrealized)} · 수익률 {_rp_unrealized_pct:+.1f}%", f"Unrealized {signed_money(_rp_unrealized)} · ROI {_rp_unrealized_pct:+.1f}%")}</div>'
         f'</div>'
@@ -5841,6 +5878,8 @@ with tab_pf:
         hidden_labels = {}
         hidden_options = []
         for p in st.session_state.portfolio:
+            if not isinstance(p, dict):
+                continue
             k = portfolio_position_key(p)
             if not k:
                 continue
@@ -5848,7 +5887,10 @@ with tab_pf:
             label = f'{p.get("name", "Polymarket position")} · {p.get("outcome", "—")} · {money(val)}'
             hidden_options.append(k)
             hidden_labels[k] = label
-        valid_hidden = [k for k in st.session_state.get("portfolio_hidden_keys", []) if k in hidden_labels]
+        hidden_keys_raw = st.session_state.get("portfolio_hidden_keys", []) or []
+        if not isinstance(hidden_keys_raw, (list, tuple, set)):
+            hidden_keys_raw = []
+        valid_hidden = [str(k) for k in hidden_keys_raw if str(k) in hidden_labels]
         if valid_hidden != st.session_state.get("portfolio_hidden_keys", []):
             st.session_state.portfolio_hidden_keys = valid_hidden
 
@@ -5897,7 +5939,7 @@ with tab_pf:
                 st.session_state[cb_key] = pkey in hidden_set
             value = _safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0)
             label = f'{t("숨김", "Hide")} · {p.get("name", "Polymarket position")} · {p.get("outcome", "—")} · {money(value)}'
-            is_hidden = st.checkbox(label, key=cb_key)
+            is_hidden = st.checkbox(label, key=cb_key, on_change=sync_portfolio_hidden_checkbox, args=(pkey, cb_key))
             if is_hidden:
                 hidden_set.add(pkey)
             else:
@@ -6232,11 +6274,12 @@ with tab_set:
 _rp_portfolio = st.session_state.get("portfolio", []) or []
 _rp_visible_portfolio = visible_portfolio_positions(_rp_portfolio)
 _rp_total_holdings, _rp_hidden_holdings = portfolio_hidden_summary()
-_rp_cash = _safe_float(st.session_state.get("cash"), 0.0)
+_rp_assets = portfolio_asset_summary(_rp_portfolio, include_hidden=False)
+_rp_cash = _rp_assets["cash"]
 _rp_wallet = str(st.session_state.get("wallet_addr", "") or "").strip()
-_rp_pos_value = sum(_safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0) for p in _rp_portfolio if isinstance(p, dict))
-_rp_pos_cost = sum(_safe_float(p.get("inv"), 0.0) for p in _rp_portfolio if isinstance(p, dict))
-_rp_total = _rp_cash + _rp_pos_value
+_rp_pos_value = _rp_assets["position_value"]
+_rp_pos_cost = _rp_assets["position_cost"]
+_rp_total = _rp_assets["total"]
 _rp_unrealized = _rp_pos_value - _rp_pos_cost
 _rp_unrealized_pct = (_rp_unrealized / _rp_pos_cost * 100.0) if _rp_pos_cost else 0.0
 _rp_exposure_pct = (_rp_pos_value / _rp_total * 100.0) if _rp_total else 0.0
@@ -6371,6 +6414,7 @@ _rp_sub = (
 _rp_holdings_count_text = f'{len(_rp_visible_portfolio)}/{len(_rp_portfolio)}'
 if _rp_hidden_holdings:
     _rp_holdings_count_text += t(f" · {_rp_hidden_holdings}숨김", f" · {_rp_hidden_holdings} hidden")
+_rp_total_label = t("표시 자산", "Visible assets") if _rp_hidden_holdings else t("총 자산", "Total assets")
 _rp_badge = t("연결됨", "Live") if _rp_wallet else t("요약", "Summary")
 _sync_meta = st.session_state.get("api_sync_meta", {}) or {}
 _sync_status = str(_sync_meta.get("status", "") or "")
@@ -6406,7 +6450,7 @@ st.markdown(
     f'<div class="portfolio-panel-badge">{_rp_badge}</div>'
     f'</div>'
     f'<div class="portfolio-total-kpi">'
-    f'<div class="k">{t("총 자산", "Total assets")}</div>'
+    f'<div class="k">{_rp_total_label}</div>'
     f'<div class="v">{money(_rp_total)}</div>'
     f'<div class="s">{t(f"미실현 {signed_money(_rp_unrealized)} · 수익률 {_rp_unrealized_pct:+.1f}%", f"Unrealized {signed_money(_rp_unrealized)} · ROI {_rp_unrealized_pct:+.1f}%")}</div>'
     f'</div>'
