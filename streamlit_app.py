@@ -891,6 +891,7 @@ DEFAULTS = {
     "today_anchor_time": "",
     "today_anchor_set_at": "",
     "today_stop_loss_gross_only": False,
+    "today_cash_adjustment": 0.0,
     "paste_trades": [],
     "paste_events": [],
     "paste_unparsed": [],
@@ -923,9 +924,80 @@ DEFAULTS = {
     "entry_visible_sections": ["선택한 시장", "내 진입 전략 / 자가 판단"],
     "self_check_scale": 5,
 }
+
+LOCAL_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memento_state.json")
+PERSIST_KEYS = [
+    "lang", "display_currency", "usd_krw_rate",
+    "profile", "cash", "deposits", "withdrawals", "adj_month", "adj_year",
+    "portfolio", "portfolio_hidden_keys", "wallet_addr", "wallet_raw", "pnl_raw",
+    "activity_raw", "activity_events", "api_sync_meta", "auto_trades", "imported_tx_ids",
+    "paste_trades", "paste_events", "paste_unparsed", "paste_meta", "journal_mode",
+    "trade_log", "watchlist", "watching_market", "order_candidates",
+    "reviews", "review_notes", "entry_self_strategy", "self_check_scale",
+    "side_panel_mode", "side_panel_section", "side_panel_trade_limit",
+    "today_start_cash", "today_stop_loss_amount", "today_goal_mode", "today_goal_pct",
+    "today_goal_amount", "today_anchor_mode", "today_anchor_key", "today_anchor_label",
+    "today_anchor_time", "today_anchor_set_at", "today_stop_loss_gross_only",
+    "today_cash_adjustment",
+]
+
+
+def _json_safe(v):
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    if isinstance(v, dict):
+        return {str(k): _json_safe(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x) for x in v]
+    return v
+
+
+def local_state_payload():
+    data = {k: _json_safe(st.session_state.get(k)) for k in PERSIST_KEYS if k in st.session_state}
+    data["_saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return data
+
+
+def load_local_state():
+    if st.session_state.get("_local_state_loaded"):
+        return
+    st.session_state["_local_state_loaded"] = True
+    if not os.path.exists(LOCAL_STATE_PATH):
+        st.session_state["_local_state_status"] = "empty"
+        return
+    try:
+        with open(LOCAL_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            st.session_state["_local_state_status"] = "invalid"
+            return
+        for k in PERSIST_KEYS:
+            if k in data:
+                st.session_state[k] = data[k]
+        st.session_state["_local_state_status"] = "loaded"
+        st.session_state["_local_state_saved_at"] = data.get("_saved_at", "")
+    except Exception as e:
+        st.session_state["_local_state_status"] = f"load_error: {e}"
+
+
+def save_local_state():
+    try:
+        data = local_state_payload()
+        tmp_path = LOCAL_STATE_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, LOCAL_STATE_PATH)
+        st.session_state["_local_state_status"] = "saved"
+        st.session_state["_local_state_saved_at"] = data.get("_saved_at", "")
+    except Exception as e:
+        st.session_state["_local_state_status"] = f"save_error: {e}"
+
+
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+load_local_state()
 
 if st.session_state.get("side_panel_mode") not in ("panels", "focus"):
     st.session_state.side_panel_mode = "panels"
@@ -937,6 +1009,10 @@ try:
     st.session_state.usd_krw_rate = max(float(st.session_state.get("usd_krw_rate", 1400.0) or 1400.0), 1.0)
 except (TypeError, ValueError):
     st.session_state.usd_krw_rate = 1400.0
+try:
+    st.session_state.today_cash_adjustment = max(float(st.session_state.get("today_cash_adjustment", 0.0) or 0.0), 0.0)
+except (TypeError, ValueError):
+    st.session_state.today_cash_adjustment = 0.0
 try:
     st.session_state.side_panel_trade_limit = max(int(st.session_state.get("side_panel_trade_limit", 5) or 5), 5)
 except (TypeError, ValueError):
@@ -4089,6 +4165,7 @@ def today_operating_metrics(current_assets=None):
     current_total = assets["total"] if assets["has_basis"] else float(effective_bankroll() or 0.0)
     if current_assets is not None:
         current_total = float(current_assets or 0.0)
+    current_total += _safe_float(st.session_state.get("today_cash_adjustment"), 0.0)
 
     start = _safe_float(st.session_state.get("today_start_cash"), 0.0)
     stop = _safe_float(st.session_state.get("today_stop_loss_amount"), 0.0)
@@ -4137,6 +4214,14 @@ def today_operating_metrics(current_assets=None):
         "anchor_time": st.session_state.get("today_anchor_time", ""),
         "anchor_mode": anchor_mode,
     }
+
+
+def sync_today_cash_adjustment():
+    """Keep manual starting cash from appearing as an artificial loss."""
+    assets = current_portfolio_assets()
+    raw_current = assets["total"] if assets["has_basis"] else float(effective_bankroll() or 0.0)
+    start = _safe_float(st.session_state.get("today_start_cash"), 0.0)
+    st.session_state.today_cash_adjustment = max(start - raw_current, 0.0)
 
 
 def today_dashboard_html(metrics):
@@ -4429,9 +4514,11 @@ with st.sidebar:
     st.session_state.setdefault("today_goal_mode", "percent")
     st.session_state.setdefault("today_goal_pct", 3.0)
     st.session_state.setdefault("today_goal_amount", 0.0)
+    st.session_state.setdefault("today_cash_adjustment", 0.0)
     pending_today_start = st.session_state.pop("_pending_today_start_cash", None)
     if pending_today_start is not None:
         st.session_state.today_start_cash = float(pending_today_start)
+        st.session_state.today_cash_adjustment = max(float(pending_today_start) - _today_current_basis, 0.0)
     if _today_has_portfolio_basis and _safe_float(st.session_state.get("today_start_cash"), 0.0) <= 0:
         st.session_state.today_start_cash = float(_today_portfolio_assets)
 
@@ -4444,7 +4531,7 @@ with st.sidebar:
     else:
         panel_goal_amount = float(st.session_state.get("today_goal_amount") or 0.0)
         panel_goal_pct = (panel_goal_amount / panel_start_cash * 100.0) if panel_start_cash > 0 else 0.0
-    panel_current_assets = float(_today_current_basis or 0.0)
+    panel_current_assets = float(_today_current_basis or 0.0) + _safe_float(st.session_state.get("today_cash_adjustment"), 0.0)
     panel_today_pnl = panel_current_assets - panel_start_cash
     panel_gain = max(panel_today_pnl, 0.0)
     panel_loss = max(-panel_today_pnl, 0.0)
@@ -4501,10 +4588,12 @@ with st.sidebar:
             st.session_state.today_anchor_time = now_label
             st.session_state.today_anchor_set_at = now_label
             st.session_state.today_start_cash = float(panel_current_assets)
+            st.session_state.today_cash_adjustment = max(float(panel_current_assets) - _today_current_basis, 0.0)
             st.rerun()
 
         start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
-                                     min_value=0.0, key="today_start_cash")
+                                     min_value=0.0, key="today_start_cash",
+                                     on_change=sync_today_cash_adjustment)
         st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
                         min_value=0.0, key="today_stop_loss_amount")
         st.checkbox(
@@ -5762,23 +5851,6 @@ with tab_pf:
         valid_hidden = [k for k in st.session_state.get("portfolio_hidden_keys", []) if k in hidden_labels]
         if valid_hidden != st.session_state.get("portfolio_hidden_keys", []):
             st.session_state.portfolio_hidden_keys = valid_hidden
-        if st.session_state.get("portfolio_hidden_keys_select") != valid_hidden:
-            st.session_state.portfolio_hidden_keys_select = valid_hidden
-
-        with st.expander(t("보유항목 숨김 관리", "Hide holdings"), expanded=False):
-            st.markdown(
-                f'<div class="footnote" style="margin:0 0 10px 0;">'
-                f'{t("숨긴 항목은 카드와 오른쪽 요약에서만 숨겨집니다. 총자산·오늘 손익 계산에는 계속 포함됩니다.", "Hidden holdings are only hidden from cards and the side summary. They still count toward total assets and today P&L.")}'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            selected_hidden = st.multiselect(
-                t("숨길 보유항목", "Holdings to hide"),
-                hidden_options,
-                format_func=lambda k: hidden_labels.get(k, k),
-                key="portfolio_hidden_keys_select",
-            )
-            st.session_state.portfolio_hidden_keys = list(selected_hidden)
 
     if st.session_state.get("dev_mode", False):
         with st.expander(t("디버그 — positions raw 응답", "Debug — raw positions response")):
@@ -5803,6 +5875,35 @@ with tab_pf:
     pos_cost = sum((p.get("inv", 0) or 0) for p in st.session_state.portfolio)
     total_assets = cash + pos_value
     bankroll_for_positions = total_assets if total_assets > 0 else prof["assets"]
+
+    if st.session_state.portfolio:
+        hidden_set = set(str(x) for x in st.session_state.get("portfolio_hidden_keys", []) or [])
+        ordered_keys = []
+        st.markdown(f'<div class="eyebrow">{t("내 보유 종목 표시", "Holding visibility")}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="footnote" style="margin:0 0 8px 0;">'
+            f'{t("숨김을 체크하면 보유종목 카드와 좌측 포트폴리오 패널에서 빠집니다. 총자산·오늘 손익 계산에는 계속 포함됩니다.",
+                 "Check Hide to remove a holding from cards and the left portfolio panel. It still counts toward total assets and today P&L.")}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        for idx, p in enumerate(st.session_state.portfolio):
+            if not isinstance(p, dict):
+                continue
+            pkey = portfolio_position_key(p) or f"row:{idx}"
+            ordered_keys.append(pkey)
+            cb_key = f"portfolio_hide_{_norm_key(pkey)[:32]}_{idx}"
+            if cb_key not in st.session_state:
+                st.session_state[cb_key] = pkey in hidden_set
+            value = _safe_float(p.get("shares"), 0.0) * (_safe_float(p.get("cur"), 0.0) / 100.0)
+            label = f'{t("숨김", "Hide")} · {p.get("name", "Polymarket position")} · {p.get("outcome", "—")} · {money(value)}'
+            is_hidden = st.checkbox(label, key=cb_key)
+            if is_hidden:
+                hidden_set.add(pkey)
+            else:
+                hidden_set.discard(pkey)
+        st.session_state.portfolio_hidden_keys = [k for k in ordered_keys if k in hidden_set]
+
     visible_pf = visible_portfolio_positions(st.session_state.portfolio)
     pf_total_count, pf_hidden_count = portfolio_hidden_summary()
 
@@ -6029,6 +6130,15 @@ with tab_set:
     # ---- backup ----
     st.markdown(f'<div class="eyebrow">{t("백업 · 복원", "Backup · restore")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("새로고침하면 데이터가 사라집니다. 백업을 내려받아 두세요. 프로필도 함께 저장됩니다.", "Data is lost on refresh. Download a backup — your profile is included.")}</div>', unsafe_allow_html=True)
+    _local_status = str(st.session_state.get("_local_state_status", ""))
+    _local_saved_at = str(st.session_state.get("_local_state_saved_at", ""))
+    st.markdown(
+        f'<div class="footnote" style="margin:0 0 10px 0;">'
+        f'{t("로컬 자동저장", "Local autosave")} · {esc(_local_status or "-")}'
+        + (f' · {esc(_local_saved_at)}' if _local_saved_at else '')
+        + f'<br>{esc(LOCAL_STATE_PATH)}</div>',
+        unsafe_allow_html=True,
+    )
     bc1, bc2 = st.columns(2)
     with bc1:
         backup = {"profile": st.session_state.profile, "cash": st.session_state.cash,
@@ -6051,6 +6161,7 @@ with tab_set:
                   "today_anchor_label": st.session_state.get("today_anchor_label", ""),
                   "today_anchor_time": st.session_state.get("today_anchor_time", ""),
                   "today_anchor_set_at": st.session_state.get("today_anchor_set_at", ""),
+                  "today_cash_adjustment": st.session_state.get("today_cash_adjustment", 0.0),
                   "activity_events": st.session_state.get("activity_events", []),
                   "api_sync_meta": st.session_state.get("api_sync_meta", {}),
                   "watchlist": st.session_state.watchlist, "order_candidates": st.session_state.order_candidates,
@@ -6096,6 +6207,7 @@ with tab_set:
                 st.session_state.today_anchor_label = data.get("today_anchor_label", st.session_state.get("today_anchor_label", ""))
                 st.session_state.today_anchor_time = data.get("today_anchor_time", st.session_state.get("today_anchor_time", ""))
                 st.session_state.today_anchor_set_at = data.get("today_anchor_set_at", st.session_state.get("today_anchor_set_at", ""))
+                st.session_state.today_cash_adjustment = float(data.get("today_cash_adjustment", st.session_state.get("today_cash_adjustment", 0.0)) or 0.0)
                 st.session_state.activity_events = data.get("activity_events", st.session_state.get("activity_events", []))
                 st.session_state.api_sync_meta = data.get("api_sync_meta", st.session_state.get("api_sync_meta", {}))
                 st.session_state.watchlist = data.get("watchlist", [])
@@ -6312,3 +6424,5 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True,
 )
+
+save_local_state()
