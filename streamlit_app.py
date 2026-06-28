@@ -1849,6 +1849,26 @@ with tab4:
         unsafe_allow_html=True,
     )
 
+    # --- durable local trade ledger: auto-saved every run, survives Polymarket purges ---
+    update_trade_ledger()
+    _led = st.session_state.get("trade_ledger", {}) or {}
+    _led_n = len(_led)
+    _led_pnl = sum(_safe_float(v.get("pnl"), 0.0) for v in _led.values()) if _led else 0.0
+    st.markdown(line(t(
+        f"📒 완료 거래 {_led_n}건이 로컬 장부에 자동 저장돼 있습니다 (누적 손익 {money(_led_pnl)}) — 폴리마켓에서 사라져도 이 장부엔 남습니다.",
+        f"{_led_n} completed trades auto-saved to your local ledger (net {money(_led_pnl)}) — kept even if Polymarket drops them."),
+        "g" if _led_n else "i"), unsafe_allow_html=True)
+    if _led:
+        _ldf = pd.DataFrame(sorted(_led.values(), key=lambda x: str(x.get("date", "")), reverse=True))
+        _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
+                                    "pnl": "손익USD", "recovered": "회수USD", "source": "출처", "first_seen": "기록시각"})
+        st.download_button(
+            t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
+            data=_ldf.to_csv(index=False).encode("utf-8-sig"),
+            file_name="memento_trade_ledger.csv", mime="text/csv",
+            use_container_width=True, key="ledger_download_btn")
+    st.markdown("<hr>", unsafe_allow_html=True)
+
     if st.session_state.get("journal_mode") not in ("wallet", "paste"):
         st.session_state.journal_mode = "wallet"
 
