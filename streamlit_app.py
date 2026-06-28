@@ -1683,6 +1683,18 @@ with tab1:
         unsafe_allow_html=True,
     )
 
+    _ll = today_loss_limit_status()
+    if _ll["hit"]:
+        st.markdown(line("🛑 " + t(
+            f"오늘 손실 {money(_ll['used'])} / 한도 {money(_ll['stop'])} 도달 — 오늘은 신규 진입을 멈추는 게 생존 규율입니다.",
+            f"Lost {money(_ll['used'])} of your {money(_ll['stop'])} daily limit — stopping now is the disciplined call."), "b"),
+            unsafe_allow_html=True)
+    elif not _ll["set"]:
+        st.markdown(line(t(
+            "일일 손실 한도가 설정되지 않았습니다. 설정해두면 한도 도달 시 자동으로 진입을 차단해 드립니다.",
+            "No daily loss limit set — set one and entries auto-block when you hit it."), "i"),
+            unsafe_allow_html=True)
+
     u1, u2 = st.columns([4, 1])
     with u1:
         entry_url_value = st.text_input(

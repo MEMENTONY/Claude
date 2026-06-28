@@ -200,7 +200,8 @@ def calculate_entry(d):
 
     g, c1, c2, blk = size_thresholds()
     hard_stop = None
-    if position_pct >= 50: hard_stop = t("시스템 실패 — 계좌 생존 리스크", "System failure — survival risk")
+    if d.get("loss_limit_hit"): hard_stop = t("오늘 손실 한도 도달 — 신규 진입 금지", "Daily loss limit hit — stop for today")
+    elif position_pct >= 50: hard_stop = t("시스템 실패 — 계좌 생존 리스크", "System failure — survival risk")
     elif stake >= sys_amt: hard_stop = t("시스템 실패 — 감정 한도 4배", "System failure — 4× emotional cap")
     elif position_pct >= blk: hard_stop = t(f"진입 금지 — 내 한도 {blk:.0f}% 초과", f"Entry blocked — over your {blk:.0f}% line")
     elif dup_pct >= blk: hard_stop = t(f"진입 금지 — 중복 노출 {blk:.0f}% 초과", f"Entry blocked — stacked over {blk:.0f}%")
@@ -1105,6 +1106,21 @@ def today_operating_metrics(current_assets=None):
         "anchor_mode": anchor_mode,
     }
 
+
+def today_loss_limit_status():
+    """Survival circuit breaker: has today's loss reached the user's stop-loss limit?
+    Returns a dict; hit=True means new entries should be blocked. Fails soft."""
+    try:
+        m = today_operating_metrics()
+        stop = float(m.get("stop") or 0.0)
+        used = float(m.get("stop_loss_used") or 0.0)
+        return {"hit": stop > 0 and used >= stop, "stop": stop, "used": used,
+                "left": max(stop - used, 0.0),
+                "pct": (used / stop * 100.0) if stop > 0 else 0.0, "set": stop > 0}
+    except Exception:
+        return {"hit": False, "stop": 0.0, "used": 0.0, "left": 0.0, "pct": 0.0, "set": False}
+
+
 def _safe_price(v, default=50.0):
     try:
         if v is None or v == "":
@@ -1130,6 +1146,7 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
     if subcategory is None:
         subcategory = infer_market_subcategory(st.session_state.get("entry_url", "") or st.session_state.get("explore_url", ""), q)
     market_type = adv.get("market_type") or "Match Moneyline"
+    loss_limit_hit = bool(today_loss_limit_status().get("hit"))
 
     data = dict(
         market_name=f"{q} — {o}",
@@ -1153,6 +1170,7 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
         duplicate_game=float(adv.get("duplicate_game", 0.0)),
         duplicate_side=float(adv.get("duplicate_side", 0.0)),
         fomo_count=int(adv.get("fomo_count", 0)),
+        loss_limit_hit=loss_limit_hit,
     )
     result = calculate_entry(data)
     st.session_state.last_entry = result
@@ -1237,6 +1255,7 @@ __all__ = [
     'sort_trades_newest_first',
     'summarize_selected_trade_groups',
     'today_anchor_timestamp',
+    'today_loss_limit_status',
     'today_operating_metrics',
     'today_realized_loss_since_anchor',
     'visible_portfolio_positions',
