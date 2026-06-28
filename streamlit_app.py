@@ -1685,7 +1685,7 @@ with tab1:
 
     _ll = today_loss_limit_status()
     if _ll["hit"]:
-        st.markdown(line("🛑 " + t(
+        st.markdown(line(t(
             f"오늘 손실 {money(_ll['used'])} / 한도 {money(_ll['stop'])} 도달 — 오늘은 신규 진입을 멈추는 게 생존 규율입니다.",
             f"Lost {money(_ll['used'])} of your {money(_ll['stop'])} daily limit — stopping now is the disciplined call."), "b"),
             unsafe_allow_html=True)
@@ -1693,6 +1693,18 @@ with tab1:
         st.markdown(line(t(
             "일일 손실 한도가 설정되지 않았습니다. 설정해두면 한도 도달 시 자동으로 진입을 차단해 드립니다.",
             "No daily loss limit set — set one and entries auto-block when you hit it."), "i"),
+            unsafe_allow_html=True)
+
+    _tilt = tilt_status()
+    if _tilt["level"] == "stop":
+        st.markdown(line(t(
+            f"최근 {_tilt['streak']}연속 손실 — 쿨다운을 권합니다. 잠시 시장에서 떨어지세요.",
+            f"{_tilt['streak']} losses in a row — take a cooldown and step away."), "b"),
+            unsafe_allow_html=True)
+    elif _tilt["level"] == "warn":
+        st.markdown(line(t(
+            f"최근 {_tilt['streak']}연속 손실 — 추격 베팅(틸트)을 조심하세요.",
+            f"{_tilt['streak']} losses in a row — watch out for tilt."), "w"),
             unsafe_allow_html=True)
 
     u1, u2 = st.columns([4, 1])
