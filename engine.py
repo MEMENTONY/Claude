@@ -1045,6 +1045,37 @@ def recent_completed_trade_rows(limit=None):
         return completed
     return completed[:max(int(limit or 0), 0)]
 
+
+def update_trade_ledger():
+    """Durably accumulate completed trades into a local ledger so the record survives
+    Polymarket dropping old data. Idempotent: merges by a stable per-trade key and never
+    deletes. The bottom-of-script save_local_state() then writes it to disk. Fails soft."""
+    try:
+        ledger = st.session_state.get("trade_ledger")
+        if not isinstance(ledger, dict):
+            ledger = {}
+        added = 0
+        for r in recent_completed_trade_rows(limit=None):
+            pnl = round(_safe_float(r.get("pnl"), 0.0), 2)
+            recovered = round(_safe_float(r.get("recovered"), 0.0), 2)
+            key = f'{r.get("market", "")}|{r.get("outcome", "")}|{r.get("latest_dt", "")}|{pnl}|{recovered}'
+            if key not in ledger:
+                ledger[key] = {
+                    "date": r.get("latest_dt", ""),
+                    "market": r.get("market", ""),
+                    "outcome": r.get("outcome", ""),
+                    "status": r.get("status", ""),
+                    "pnl": pnl,
+                    "recovered": recovered,
+                    "source": r.get("source", ""),
+                    "first_seen": datetime.now(KST).isoformat(timespec="minutes"),
+                }
+                added += 1
+        st.session_state.trade_ledger = ledger
+        return added
+    except Exception:
+        return 0
+
 def today_anchor_timestamp():
     """Timestamp for the selected operating anchor, if one has been stored."""
     raw = str(st.session_state.get("today_anchor_time") or "").strip()
@@ -1322,5 +1353,6 @@ __all__ = [
     'today_realized_loss_since_anchor',
     'tilt_status',
     'day_is_locked',
+    'update_trade_ledger',
     'visible_portfolio_positions',
 ]

@@ -100,6 +100,7 @@ DEFAULTS = {
     "entry_visible_sections": ["선택한 시장", "내 진입 전략 / 자가 판단"],
     "self_check_scale": 5,
     "day_locked_date": "",
+    "trade_ledger": {},
 }
 
 LOCAL_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memento_state.json")
@@ -118,6 +119,7 @@ PERSIST_KEYS = [
     "today_anchor_time", "today_anchor_set_at", "today_stop_loss_gross_only",
     "today_cash_adjustment",
     "day_locked_date",
+    "trade_ledger",
 ]
 
 GAME_RE = re.compile(r"\b(game|map)\s*[1-5]\b", re.I)
