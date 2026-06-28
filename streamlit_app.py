@@ -898,6 +898,21 @@ try:
 except (TypeError, ValueError):
     st.session_state.side_panel_trade_limit = 5
 
+# Auto-sync the saved wallet once per session: just opening/refreshing the app keeps the
+# trade ledger current. Dedup is by tx_id (no duplicate saving). The Journal tab button
+# forces a fresh re-sync within a session.
+if not st.session_state.get("_wallet_autosynced"):
+    st.session_state._wallet_autosynced = True
+    _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
+    if _wa.startswith("0x") and len(_wa) == 42:
+        _auto = sync_wallet(_wa, limit=100, force=False)
+        if _auto.get("ok") and _auto.get("added"):
+            try:
+                st.toast(t(f"지갑 자동 동기화 · 새 거래 {_auto['added']}건 장부에 저장",
+                           f"Wallet auto-synced · {_auto['added']} new trades saved"))
+            except Exception:
+                pass
+
 _panel_mode = st.session_state.get("side_panel_mode", "panels")
 _panel_section = st.session_state.get("side_panel_section", "today")
 _sidebar_width = "clamp(23.5rem, 28vw, 28rem)" if _panel_mode == "panels" else "10.5rem"
@@ -1900,37 +1915,15 @@ with tab4:
         with ac2:
             act_limit = st.number_input(t("불러올 개수", "Limit"), 10, 300, 100, step=10, key="activity_import_limit")
 
-        if st.button(t("거래내역 불러오기", "Import trades"), use_container_width=True, key="activity_import_btn"):
-            a = st.session_state.wallet_addr.strip()
-            if not (a.startswith("0x") and len(a) == 42):
+        if st.button(t("거래내역 불러오기 (강제 새로고침)", "Import trades (force refresh)"), use_container_width=True, key="activity_import_btn"):
+            with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
+                _res = sync_wallet(st.session_state.wallet_addr, limit=act_limit, force=True)
+            if _res["error"] == "bad_address":
                 st.markdown(line(t("주소 형식 오류 — 0x로 시작하는 42자 주소인지 확인하세요.", "Bad address — must be 42 chars starting with 0x."), "b"), unsafe_allow_html=True)
+            elif not _res["ok"]:
+                st.markdown(line(t(f"거래내역 불러오기 실패 — {_res['error']}", f"Activity import failed — {_res['error']}"), "b"), unsafe_allow_html=True)
             else:
-                try:
-                    with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
-                        fetch_wallet_activity.clear()
-                        raw = fetch_wallet_activity(a, limit=act_limit)
-                    st.session_state.activity_raw = raw
-                    st.session_state.activity_events = normalize_activity_events(raw)
-                    items = sort_trades_newest_first(normalize_activity(raw))
-                    added = merge_activity_into_log(items)
-                    st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
-                    st.session_state.api_sync_meta = {
-                        "status": "ok",
-                        "source": t("거래일지", "Journal"),
-                        "wallet": a,
-                        "last_sync_at": datetime.now(KST).isoformat(timespec="minutes"),
-                        "positions": len(st.session_state.get("portfolio", []) or []),
-                        "raw_activity": len(raw) if isinstance(raw, list) else 0,
-                        "trades": len(items),
-                        "events": len(st.session_state.get("activity_events", []) or []),
-                        "added": added,
-                        "error": "",
-                    }
-                    st.markdown(line(t(f"자동 거래내역 {len(items)}건 확인 · 새로 추가 {added}건", f"Found {len(items)} auto trades · added {added}"), "g"), unsafe_allow_html=True)
-                except urllib.error.HTTPError as e:
-                    st.markdown(line(t(f"거래내역 불러오기 실패 (HTTP {e.code})", f"Activity import failed (HTTP {e.code})"), "b"), unsafe_allow_html=True)
-                except Exception as e:
-                    st.markdown(line(t(f"거래내역 불러오기 실패 — {e}", f"Activity import failed — {e}"), "b"), unsafe_allow_html=True)
+                st.markdown(line(t(f"거래내역 {_res['found']}건 확인 · 새로 추가 {_res['added']}건 (장부에 저장됨)", f"Found {_res['found']} trades · added {_res['added']} (saved to ledger)"), "g"), unsafe_allow_html=True)
 
         st.markdown("<hr>", unsafe_allow_html=True)
         if st.session_state.auto_trades:
