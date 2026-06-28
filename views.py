@@ -1182,6 +1182,43 @@ def _selected_entry_form(entry_category, entry_subcategory):
             st.session_state.ai_last_market_key = ""
             st.success(t("AI 리서치 탭에서 리포트를 생성하세요", "Generate the report in the AI research tab"))
 
+
+def sync_wallet(addr, limit=100, force=False):
+    """Fetch wallet activity, merge new trades (dedup by tx_id), archive completed trades
+    to the durable ledger, and record sync meta. Shared by the manual button and the
+    once-per-session auto-sync. Returns a result dict; never raises."""
+    a = str(addr or "").strip()
+    if not (a.startswith("0x") and len(a) == 42):
+        return {"ok": False, "error": "bad_address", "added": 0, "found": 0}
+    try:
+        if force:
+            fetch_wallet_activity.clear()
+        raw = fetch_wallet_activity(a, limit=int(limit or 100))
+        st.session_state.activity_raw = raw
+        st.session_state.activity_events = normalize_activity_events(raw)
+        items = sort_trades_newest_first(normalize_activity(raw))
+        added = merge_activity_into_log(items)
+        st.session_state.auto_trades = sort_trades_newest_first(st.session_state.get("auto_trades", []))
+        update_trade_ledger()
+        st.session_state.api_sync_meta = {
+            "status": "ok",
+            "source": t("거래일지", "Journal") if force else t("자동 동기화", "Auto sync"),
+            "wallet": a,
+            "last_sync_at": datetime.now(KST).isoformat(timespec="minutes"),
+            "positions": len(st.session_state.get("portfolio", []) or []),
+            "raw_activity": len(raw) if isinstance(raw, list) else 0,
+            "trades": len(items),
+            "events": len(st.session_state.get("activity_events", []) or []),
+            "added": added,
+            "error": "",
+        }
+        return {"ok": True, "error": "", "added": added, "found": len(items)}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": f"http_{e.code}", "added": 0, "found": 0}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "added": 0, "found": 0}
+
+
 __all__ = [
     '_ai_plain_fallback',
     '_market_table',
@@ -1201,5 +1238,6 @@ __all__ = [
     'render_trade_pnl_summary',
     'sync_portfolio_hidden_checkbox',
     'sync_today_cash_adjustment',
+    'sync_wallet',
     'today_dashboard_html',
 ]
