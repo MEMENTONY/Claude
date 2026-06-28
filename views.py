@@ -810,6 +810,7 @@ def render_entry_result(r):
         + stat("Edge", f"{r['edge']:+.1f}¢", t("내 적정가 대비", "vs fair price"), edge_tone)
         + stat(t("포트폴리오 비중", "Portfolio %"), f"{r['position_pct']:.1f}%", r["size_label"], pos_tone)
         + stat(t("추천 상한선", "Suggested cap"), money(r["rec_cap"]), t(f"투자금 {money(r['stake'])}", f"Stake {money(r['stake'])}"))
+        + stat(t("켈리 추천액", "Kelly stake"), money(r["kelly_stake"]), t(f"{r['kelly_fraction']:.0%} 켈리 · edge {r['edge']:+.0f}¢", f"{r['kelly_fraction']:.0%} Kelly · edge {r['edge']:+.0f}¢"))
         + "</div>",
         unsafe_allow_html=True)
 
@@ -834,6 +835,7 @@ def render_entry_result(r):
     if r["fomo_count"] > 0: notes += line(r["fomo_note"], r["fomo_kind"])
     if r["duplicate_pct"] >= size_thresholds()[1]: notes += line(r["exp_note"], r["exp_kind"])
     if r["high_warn"]: notes += line(r["high_warn"], "b")
+    notes += line(r["kelly_note"], r["kelly_kind"])
     st.markdown(notes, unsafe_allow_html=True)
 
     with st.expander(t("상세 리포트", "Detailed report")):
@@ -843,6 +845,7 @@ def render_entry_result(r):
             + spec_row(t("배팅금액 · 계좌 생존", "Stake · survival"), f"{t('투자금','Stake')} <b>{money(r['stake'])}</b> / {t('총자산','Portfolio')} <b>{money(r['bankroll'])}</b> · <b>{r['position_pct']:.1f}%</b><br>{r['size_note']}", r["size_label"], r["size_kind"])
             + spec_row(t("북메이커 비교", "Bookmaker check"), f"{t('내 적정가−현재가','Fair−mkt')} <b>{r['my_vs_poly']:+.1f}%p</b> · {t('북메이커−현재가','Book−mkt')} <b>{r['book_vs_poly']:+.1f}%p</b><br>{r['book_note']}", r["book_label"], r["book_kind"])
             + spec_row(t("추천 상한선", "Suggested cap"), f"<b>{money(r['rec_cap'])}</b> · {t('투자금','Stake')} <b>{money(r['stake'])}</b> · {r['confidence']}", r["cap_label"], r["cap_kind"])
+            + spec_row(t("켈리 베팅 사이징", "Kelly sizing"), f"{t('추천','Suggested')} <b>{money(r['kelly_stake'])}</b> · {t('전체 켈리','full Kelly')} {r['kelly_full']*100:.0f}% × {r['kelly_fraction']:.0%}<br>{r['kelly_note']}", r["kelly_label"], r["kelly_kind"])
             + spec_row(t("손익비", "Risk : reward"), f"{t('목표 도달','At target')} <b>{money(r['target_profit'])}</b> · {t('손절','At stop')} <b>{money(r['stop_loss_amt'])}</b><br>{r['rr_text']}", f"{r['rr']:.2f} : 1", r["rr_kind"])
             + spec_row(t("감정 · FOMO", "Emotion · FOMO"), f"{t('체크','Checks')} <b>{r['fomo_count']}</b> — {r['fomo_note']}", r["fomo_label"], r["fomo_kind"])
             + spec_row(t("중복 노출", "Stacked exposure"), f"<b>{money(r['duplicate_total'])}</b> · <b>{r['duplicate_pct']:.1f}%</b><br>{r['exp_note']}", r["exp_label"], r["exp_kind"])

@@ -126,6 +126,33 @@ def calculate_entry(d):
     if d["fomo_count"] >= 1:
         rec_cap *= 0.5
 
+    # --- Kelly stake sizing (fractional, conservative) ---
+    # For a binary YES share bought at current_price cents, the full-Kelly fraction
+    # of bankroll is edge / (100 - price); it is naturally bounded to [0, 1] because
+    # fair_price <= 100. We scale it down by confidence (never above 1/2 Kelly) and
+    # never suggest more than the existing risk cap -- Kelly proposes, guardrails dispose.
+    kelly_upside = 100.0 - current_price
+    kelly_full = max(0.0, min(1.0, edge / kelly_upside)) if kelly_upside > 0 else 0.0
+    kelly_fraction = [0.10, 0.15, 0.25, 0.40, 0.50][ci]
+    kelly_stake_raw = kelly_full * kelly_fraction * bankroll
+    kelly_stake = min(kelly_stake_raw, rec_cap) if kelly_stake_raw > 0 else 0.0
+    if kelly_full <= 0:
+        kelly_kind, kelly_label, kelly_note = "i", t("엣지 없음", "No edge"), t(
+            "적정가가 현재가 이하라 켈리 기준 베팅액은 0입니다.",
+            "Fair price is at or below market, so Kelly suggests no bet.")
+    elif stake > kelly_stake * 1.5:
+        kelly_kind, kelly_label, kelly_note = "w", t("켈리 초과", "Above Kelly"), t(
+            f"투자금이 켈리 추천({money(kelly_stake)})의 1.5배를 넘습니다 — 변동성이 큽니다.",
+            f"Stake is over 1.5x the Kelly size ({money(kelly_stake)}) — higher variance.")
+    elif stake < kelly_stake * 0.5:
+        kelly_kind, kelly_label, kelly_note = "i", t("켈리 미만", "Below Kelly"), t(
+            f"켈리 추천({money(kelly_stake)})보다 보수적입니다 — 안전하지만 성장은 더딥니다.",
+            f"More conservative than Kelly ({money(kelly_stake)}) — safe but slower growth.")
+    else:
+        kelly_kind, kelly_label, kelly_note = "g", t("켈리 부합", "Near Kelly"), t(
+            f"투자금이 켈리 추천({money(kelly_stake)})과 비슷합니다.",
+            f"Stake is near the Kelly size ({money(kelly_stake)}).")
+
     sys_amt, warn_amt = el * 4, el * 2
     if stake >= sys_amt: cap_label, cap_kind, cap_pen = t(f"감정 한도 4배 초과 — 시스템 실패", "4× emotional cap — system failure"), "b", -90
     elif stake >= warn_amt: cap_label, cap_kind, cap_pen = t(f"감정 한도 2배 초과 — 강한 경고", "2× emotional cap — strong warning"), "b", -50
@@ -234,6 +261,9 @@ def calculate_entry(d):
             "chase_label": chase_label, "chase_kind": chase_kind, "chase_note": chase_note,
             "book_label": book_label, "book_kind": book_kind, "book_note": book_note,
             "my_vs_poly": my_vs_poly, "book_vs_poly": book_vs_poly, "my_vs_book": my_vs_book,
+            "kelly_full": kelly_full, "kelly_fraction": kelly_fraction,
+            "kelly_stake": kelly_stake, "kelly_stake_raw": kelly_stake_raw,
+            "kelly_label": kelly_label, "kelly_kind": kelly_kind, "kelly_note": kelly_note,
             "reasons": reasons}
 
 def partial_rows(shares, price_cent, investment):
