@@ -837,6 +837,7 @@ def render_entry_result(r):
     if r["high_warn"]: notes += line(r["high_warn"], "b")
     notes += line(r["kelly_note"], r["kelly_kind"])
     if r.get("tilt_note"): notes += line(r["tilt_note"], r["tilt_kind"])
+    if r.get("adapt_note"): notes += line(r["adapt_note"], r["adapt_kind"])
     st.markdown(notes, unsafe_allow_html=True)
 
     with st.expander(t("상세 리포트", "Detailed report")):

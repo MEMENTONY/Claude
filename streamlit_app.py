@@ -1683,6 +1683,31 @@ with tab1:
         unsafe_allow_html=True,
     )
 
+    # --- day lock: one-click commitment device, survives reload, auto-clears tomorrow ---
+    if day_is_locked():
+        st.markdown(line(t(
+            "🔒 오늘 베팅 잠금 상태 — 신규 진입이 차단됩니다. 잘하고 있어요. 내일 다시.",
+            "Locked for today — new entries are blocked. Well done; come back tomorrow."), "b"),
+            unsafe_allow_html=True)
+        with st.expander(t("잠금 해제 (권장하지 않음)", "Unlock (not recommended)")):
+            if st.checkbox(t("오늘은 쉬기로 했지만 정말 해제합니다", "I really do want to unlock"), key="entry_unlock_confirm"):
+                if st.button(t("잠금 해제", "Unlock"), key="entry_unlock_btn"):
+                    st.session_state.day_locked_date = ""
+                    save_local_state()
+                    st.rerun()
+    else:
+        _lk1, _lk2 = st.columns([1, 3])
+        with _lk1:
+            if st.button(t("🔒 오늘 그만", "🔒 Lock today"), key="entry_lock_btn", use_container_width=True):
+                st.session_state.day_locked_date = datetime.now(KST).date().isoformat()
+                save_local_state()
+                st.rerun()
+        with _lk2:
+            st.markdown(line(t(
+                "충동이 올라오면 누르세요 — 오늘 남은 시간 진입을 잠급니다(새로고침해도 유지).",
+                "Hit this when the urge rises — it locks entries for the rest of today (survives refresh)."), "i"),
+                unsafe_allow_html=True)
+
     _ll = today_loss_limit_status()
     if _ll["hit"]:
         st.markdown(line(t(

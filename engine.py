@@ -126,6 +126,11 @@ def calculate_entry(d):
     if d["fomo_count"] >= 1:
         rec_cap *= 0.5
 
+    # --- Loss-adaptive shrink: the more you've lost today (and on a losing streak),
+    # the smaller the cap -- so you cannot up-size a bet to "win it back". ---
+    loss_adapt = max(0.0, min(1.0, d.get("loss_adapt_factor", 1.0)))
+    rec_cap *= loss_adapt
+
     # --- Kelly stake sizing (fractional, conservative) ---
     # For a binary YES share bought at current_price cents, the full-Kelly fraction
     # of bankroll is edge / (100 - price); it is naturally bounded to [0, 1] because
@@ -200,7 +205,8 @@ def calculate_entry(d):
 
     g, c1, c2, blk = size_thresholds()
     hard_stop = None
-    if d.get("loss_limit_hit"): hard_stop = t("오늘 손실 한도 도달 — 신규 진입 금지", "Daily loss limit hit — stop for today")
+    if d.get("day_locked"): hard_stop = t("오늘 베팅 잠금 — 신규 진입 차단", "Day locked — no new entries")
+    elif d.get("loss_limit_hit"): hard_stop = t("오늘 손실 한도 도달 — 신규 진입 금지", "Daily loss limit hit — stop for today")
     elif d.get("tilt_level") == "stop": hard_stop = t(f"연속 손실 {int(d.get('tilt_streak', 3))}회 — 쿨다운 필요", f"{int(d.get('tilt_streak', 3))} losses in a row — cool down")
     elif position_pct >= 50: hard_stop = t("시스템 실패 — 계좌 생존 리스크", "System failure — survival risk")
     elif stake >= sys_amt: hard_stop = t("시스템 실패 — 감정 한도 4배", "System failure — 4× emotional cap")
@@ -255,6 +261,11 @@ def calculate_entry(d):
     else:
         tilt_kind, tilt_note = "i", ""
 
+    if loss_adapt < 0.999:
+        adapt_kind, adapt_note = "w", t(f"오늘 손실로 추천 상한이 {(1 - loss_adapt) * 100:.0f}% 축소됨 — 만회용 큰 베팅을 막습니다.", f"Cap cut {(1 - loss_adapt) * 100:.0f}% after today's losses — blocks revenge sizing.")
+    else:
+        adapt_kind, adapt_note = "i", ""
+
     return {**d, "edge": edge, "position_pct": position_pct,
             "duplicate_total": dup_total, "duplicate_pct": dup_pct, "rec_cap": rec_cap,
             "value_score": round(value_score, 1), "final_score": round(final_score, 1),
@@ -276,6 +287,7 @@ def calculate_entry(d):
             "kelly_stake": kelly_stake, "kelly_stake_raw": kelly_stake_raw,
             "kelly_label": kelly_label, "kelly_kind": kelly_kind, "kelly_note": kelly_note,
             "tilt_kind": tilt_kind, "tilt_note": tilt_note,
+            "adapt_kind": adapt_kind, "adapt_note": adapt_note, "loss_adapt": loss_adapt,
             "reasons": reasons}
 
 def partial_rows(shares, price_cent, investment):
@@ -1149,6 +1161,15 @@ def tilt_status():
         return {"streak": 0, "level": "ok"}
 
 
+def day_is_locked():
+    """Commitment device: True if the user locked betting for today (survives reload,
+    auto-clears next day). Set via the entry tab 'lock today' button."""
+    try:
+        return str(st.session_state.get("day_locked_date") or "") == datetime.now(KST).date().isoformat()
+    except Exception:
+        return False
+
+
 def _safe_price(v, default=50.0):
     try:
         if v is None or v == "":
@@ -1174,8 +1195,16 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
     if subcategory is None:
         subcategory = infer_market_subcategory(st.session_state.get("entry_url", "") or st.session_state.get("explore_url", ""), q)
     market_type = adv.get("market_type") or "Match Moneyline"
-    loss_limit_hit = bool(today_loss_limit_status().get("hit"))
+    _ll = today_loss_limit_status()
+    loss_limit_hit = bool(_ll.get("hit"))
     _tilt = tilt_status()
+    # loss-adaptive shrink: cap shrinks as today's loss budget is used and on a losing streak
+    loss_adapt_factor = 1.0
+    if _ll.get("set"):
+        loss_adapt_factor = max(0.0, 1.0 - _ll.get("pct", 0.0) / 100.0)
+    if _tilt.get("streak", 0) >= 2:
+        loss_adapt_factor *= 0.5
+    day_locked = day_is_locked()
 
     data = dict(
         market_name=f"{q} — {o}",
@@ -1202,6 +1231,8 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
         loss_limit_hit=loss_limit_hit,
         tilt_streak=int(_tilt.get("streak", 0)),
         tilt_level=_tilt.get("level", "ok"),
+        loss_adapt_factor=loss_adapt_factor,
+        day_locked=day_locked,
     )
     result = calculate_entry(data)
     st.session_state.last_entry = result
@@ -1290,5 +1321,6 @@ __all__ = [
     'today_operating_metrics',
     'today_realized_loss_since_anchor',
     'tilt_status',
+    'day_is_locked',
     'visible_portfolio_positions',
 ]
