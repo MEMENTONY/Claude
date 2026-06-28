@@ -201,6 +201,7 @@ def calculate_entry(d):
     g, c1, c2, blk = size_thresholds()
     hard_stop = None
     if d.get("loss_limit_hit"): hard_stop = t("오늘 손실 한도 도달 — 신규 진입 금지", "Daily loss limit hit — stop for today")
+    elif d.get("tilt_level") == "stop": hard_stop = t(f"연속 손실 {int(d.get('tilt_streak', 3))}회 — 쿨다운 필요", f"{int(d.get('tilt_streak', 3))} losses in a row — cool down")
     elif position_pct >= 50: hard_stop = t("시스템 실패 — 계좌 생존 리스크", "System failure — survival risk")
     elif stake >= sys_amt: hard_stop = t("시스템 실패 — 감정 한도 4배", "System failure — 4× emotional cap")
     elif position_pct >= blk: hard_stop = t(f"진입 금지 — 내 한도 {blk:.0f}% 초과", f"Entry blocked — over your {blk:.0f}% line")
@@ -245,6 +246,15 @@ def calculate_entry(d):
                (cap_kind, t(f"추천 상한선 {money(rec_cap)} · 투자금 {money(stake)} — {cap_label}", f"Cap {money(rec_cap)} · stake {money(stake)} — {cap_label}")),
                (zone_kind, t(f"가격 구간 — {zone_label}. {zone_note}", f"Price zone — {zone_label}. {zone_note}"))]
 
+    _tlevel = d.get("tilt_level", "ok")
+    _tstreak = int(d.get("tilt_streak", 0) or 0)
+    if _tlevel == "stop":
+        tilt_kind, tilt_note = "b", t(f"최근 {_tstreak}연속 손실 — 지금은 쉬어야 할 때입니다.", f"{_tstreak} losses in a row — time to step away.")
+    elif _tlevel == "warn":
+        tilt_kind, tilt_note = "w", t(f"최근 {_tstreak}연속 손실 — 추격 베팅을 조심하세요.", f"{_tstreak} losses in a row — beware loss-chasing.")
+    else:
+        tilt_kind, tilt_note = "i", ""
+
     return {**d, "edge": edge, "position_pct": position_pct,
             "duplicate_total": dup_total, "duplicate_pct": dup_pct, "rec_cap": rec_cap,
             "value_score": round(value_score, 1), "final_score": round(final_score, 1),
@@ -265,6 +275,7 @@ def calculate_entry(d):
             "kelly_full": kelly_full, "kelly_fraction": kelly_fraction,
             "kelly_stake": kelly_stake, "kelly_stake_raw": kelly_stake_raw,
             "kelly_label": kelly_label, "kelly_kind": kelly_kind, "kelly_note": kelly_note,
+            "tilt_kind": tilt_kind, "tilt_note": tilt_note,
             "reasons": reasons}
 
 def partial_rows(shares, price_cent, investment):
@@ -1121,6 +1132,23 @@ def today_loss_limit_status():
         return {"hit": False, "stop": 0.0, "used": 0.0, "left": 0.0, "pct": 0.0, "set": False}
 
 
+def tilt_status():
+    """Behavioral guardrail: count trailing consecutive losing trades (tilt / loss-chasing).
+    level: 'stop' (>=3 in a row), 'warn' (2), else 'ok'. Fails soft."""
+    try:
+        rows = recent_completed_trade_rows(limit=12)  # already newest-first
+        streak = 0
+        for r in rows:
+            if _safe_float(r.get("pnl"), 0.0) < 0:
+                streak += 1
+            else:
+                break
+        level = "stop" if streak >= 3 else "warn" if streak >= 2 else "ok"
+        return {"streak": streak, "level": level}
+    except Exception:
+        return {"streak": 0, "level": "ok"}
+
+
 def _safe_price(v, default=50.0):
     try:
         if v is None or v == "":
@@ -1147,6 +1175,7 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
         subcategory = infer_market_subcategory(st.session_state.get("entry_url", "") or st.session_state.get("explore_url", ""), q)
     market_type = adv.get("market_type") or "Match Moneyline"
     loss_limit_hit = bool(today_loss_limit_status().get("hit"))
+    _tilt = tilt_status()
 
     data = dict(
         market_name=f"{q} — {o}",
@@ -1171,6 +1200,8 @@ def analyze_entry_row(row, stake, fair_price, confidence, purpose, category=None
         duplicate_side=float(adv.get("duplicate_side", 0.0)),
         fomo_count=int(adv.get("fomo_count", 0)),
         loss_limit_hit=loss_limit_hit,
+        tilt_streak=int(_tilt.get("streak", 0)),
+        tilt_level=_tilt.get("level", "ok"),
     )
     result = calculate_entry(data)
     st.session_state.last_entry = result
@@ -1258,5 +1289,6 @@ __all__ = [
     'today_loss_limit_status',
     'today_operating_metrics',
     'today_realized_loss_since_anchor',
+    'tilt_status',
     'visible_portfolio_positions',
 ]
