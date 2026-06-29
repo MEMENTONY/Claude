@@ -901,17 +901,22 @@ except (TypeError, ValueError):
 # Auto-sync the saved wallet once per session: just opening/refreshing the app keeps the
 # trade ledger current. Dedup is by tx_id (no duplicate saving). The Journal tab button
 # forces a fresh re-sync within a session.
-if not st.session_state.get("_wallet_autosynced"):
-    st.session_state._wallet_autosynced = True
-    _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
-    if _wa.startswith("0x") and len(_wa) == 42:
-        _auto = sync_wallet(_wa, limit=100, force=False)
-        if _auto.get("ok") and _auto.get("added"):
-            try:
-                st.toast(t(f"지갑 자동 동기화 · 새 거래 {_auto['added']}건 장부에 저장",
-                           f"Wallet auto-synced · {_auto['added']} new trades saved"))
-            except Exception:
-                pass
+# Wrapped so this startup network step can NEVER break the app boot (e.g. a slow/failed
+# fetch, or a stale module after a redeploy) -- worst case it silently skips.
+try:
+    if not st.session_state.get("_wallet_autosynced"):
+        st.session_state._wallet_autosynced = True
+        _wa = str(st.session_state.get("wallet_addr", "") or "").strip()
+        if _wa.startswith("0x") and len(_wa) == 42:
+            _auto = sync_wallet(_wa, limit=100, force=False)
+            if _auto.get("ok") and _auto.get("added"):
+                try:
+                    st.toast(t(f"지갑 자동 동기화 · 새 거래 {_auto['added']}건 장부에 저장",
+                               f"Wallet auto-synced · {_auto['added']} new trades saved"))
+                except Exception:
+                    pass
+except Exception:
+    pass
 
 _panel_mode = st.session_state.get("side_panel_mode", "panels")
 _panel_section = st.session_state.get("side_panel_section", "today")
