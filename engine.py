@@ -756,10 +756,10 @@ def _norm_key(v):
     return "".join(ch.lower() for ch in str(v or "") if ch.isalnum())
 
 def _trade_ts(tr):
-    try:
-        return datetime.fromisoformat(str(tr.get("d")))
-    except Exception:
-        return datetime.min
+    # Always return a consistent timezone-aware (KST) datetime so sorting and
+    # "now - then" math never mix naive/aware values (which raises TypeError).
+    dt = parse_trade_datetime(tr) if isinstance(tr, dict) else None
+    return dt or datetime.min.replace(tzinfo=KST)
 
 def link_position_to_trades(p, trades):
     """Connect one open position to imported activity using token/asset first, then market+outcome fallback."""
@@ -788,7 +788,7 @@ def link_position_to_trades(p, trades):
     avg_px = (buy_amount / buy_shares * 100) if buy_shares else 0
     last_trade = matched[-1]["d"][:16] if matched else ""
     last_buy_dt = _trade_ts(buys[-1]) if buys else None
-    recent_add = bool(last_buy_dt and (datetime.now() - last_buy_dt).total_seconds() <= 60 * 60 * 24)
+    recent_add = bool(last_buy_dt and (datetime.now(KST) - last_buy_dt).total_seconds() <= 60 * 60 * 24)
     repeat_entry = len(buys) >= 3
     note = t(f"연결 거래 {len(matched)}건 · 매수 {len(buys)}회 / 매도 {len(sells)}회",
              f"Linked {len(matched)} fills · {len(buys)} buys / {len(sells)} sells")
@@ -824,6 +824,8 @@ def period_pnl():
     for tr in st.session_state.trade_log:
         try:
             dt = datetime.fromisoformat(tr["d"])
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
         except Exception:
             continue
         p = tr.get("profit", 0.0)
