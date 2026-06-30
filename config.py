@@ -101,6 +101,7 @@ DEFAULTS = {
     "self_check_scale": 5,
     "day_locked_date": "",
     "trade_ledger": {},
+    "trade_resolutions": {},
 }
 
 LOCAL_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memento_state.json")
@@ -120,6 +121,7 @@ PERSIST_KEYS = [
     "today_cash_adjustment",
     "day_locked_date",
     "trade_ledger",
+    "trade_resolutions",
 ]
 
 GAME_RE = re.compile(r"\b(game|map)\s*[1-5]\b", re.I)

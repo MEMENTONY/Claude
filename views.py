@@ -436,16 +436,17 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
     selected_for_review = []
     source = "wallet" if str(key_prefix or "").startswith("wallet") else "paste"
     for idx, r in enumerate(rows):
-        pnl = _display_realized(r)
+        res = resolve_trade_row(r)
+        pnl = res["realized_final"]
         pnl_text = t("확인 필요", "Verify") if pnl is None else signed_money(pnl)
         pnl_cls = "i" if pnl is None else ("g" if pnl >= 0 else "b")
         latest = r.get("latest_dt") or t("시간 확인 필요", "time unknown")
-        status_text = r.get("adjusted_status") or r.get("status")
+        status_text = res["status_final"]
         rem_shares = _display_remaining_shares(r)
         rem_cost = _display_remaining_cost(r)
         closed_shares = _display_sold_shares(r)
         exit_price = _display_exit_price(r)
-        pnl_label = t("실현손익(추정 · 정산반영)", "Realized est. · settlement applied") if r.get("_adjusted") else t("실현손익(추정)", "Realized est.")
+        pnl_label = t("실현손익(확정)", "Realized (resolved)") if res["resolved"] else (t("실현손익(추정 · 정산반영)", "Realized est. · settlement applied") if r.get("_adjusted") else t("실현손익(추정)", "Realized est."))
         note_parts = [f'{t("체결 수", "Fills")}: {int(r.get("fills", 0))}']
         if r.get("linked_event_note"):
             note_parts.append(str(r.get("linked_event_note")))
@@ -483,6 +484,25 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>''',
                 unsafe_allow_html=True,
             )
+            if rem_shares > 1e-6:
+                _opts = ["", "won", "lost"]
+                _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
+                _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
+                _pick = st.radio(
+                    t("결과 확정 — 보유분이 이기면 승, 지면 패", "Resolve held shares — Won / Lost"),
+                    _opts, index=_opts.index(_cur) if _cur in _opts else 0,
+                    format_func=lambda x: _lbl[x], horizontal=True,
+                    key=f"resolve_{key_prefix}_{idx}",
+                )
+                if _pick != _cur:
+                    _rmap = dict(st.session_state.get("trade_resolutions") or {})
+                    if _pick:
+                        _rmap[r.get("key")] = _pick
+                    else:
+                        _rmap.pop(r.get("key"), None)
+                    st.session_state.trade_resolutions = _rmap
+                    save_local_state()
+                    st.rerun()
         if send_flag:
             selected_for_review.append(r)
 
@@ -494,6 +514,35 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                 st.success(t(f"거래복기에 {added}건을 보냈습니다.", f"Sent {added} trade(s) to Trade Review."))
             else:
                 st.info(t("이미 거래복기에 있는 항목입니다.", "Selected trade(s) already exist in Trade Review."))
+
+def render_performance_summary(key_prefix="perf"):
+    """All-time win/loss + category performance from the durable trade ledger."""
+    s = performance_summary()
+    if not s["n"]:
+        st.markdown(line(t("아직 확정된 거래가 없습니다 — 거래를 동기화하고 보유 거래의 승/패를 확정하면 성과가 집계됩니다.",
+                           "No settled trades yet — sync trades and mark held trades Won/Lost to see performance."), "i"), unsafe_allow_html=True)
+        return
+    pf = s["profit_factor"]
+    pf_text = "∞" if pf is None else f"{pf:.2f}"
+    st.markdown(f'<div class="eyebrow" style="margin-top:6px;">{t("승패 · 카테고리 성과 (전체 · 장부 기준)", "Win/loss & category performance (all-time)")}</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="stats">'
+        + stat(t("승률", "Win rate"), f'{s["win_rate"]:.0f}%', t(f'{s["wins"]}승 {s["losses"]}패 · {s["n"]}건', f'{s["wins"]}W {s["losses"]}L · {s["n"]}'))
+        + stat(t("총 실현손익", "Total realized"), signed_money(s["total_pnl"]), "", "pos" if s["total_pnl"] >= 0 else "neg")
+        + stat(t("손익비(PF)", "Profit factor"), pf_text, t("총이익÷총손실", "gross win ÷ loss"))
+        + stat(t("평균 이익 / 손실", "Avg win / loss"), f'{money(s["avg_win"])} / {money(-s["avg_loss"])}', t("비대칭 점검", "asymmetry"))
+        + "</div>", unsafe_allow_html=True)
+    cats = s["by_category"]
+    if cats:
+        cells = ""
+        for cat, c in sorted(cats.items(), key=lambda kv: kv[1]["pnl"]):
+            wr = (c["wins"] / c["n"] * 100) if c["n"] else 0
+            tone = "pos" if c["pnl"] >= 0 else "neg"
+            cells += (f'<div class="pf-metric"><div class="k">{esc(cat)} · {c["n"]}건 · {wr:.0f}%</div>'
+                      f'<div class="v {tone}">{signed_money(c["pnl"])}</div></div>')
+        st.markdown(f'<div class="eyebrow" style="margin-top:10px;">{t("카테고리별", "By category")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="pf-metrics">{cells}</div>', unsafe_allow_html=True)
+
 
 def render_trade_event_cards(events, title=None):
     events = [ev for ev in (events or []) if isinstance(ev, dict) and not ev.get("_linked_to")]
@@ -1232,6 +1281,7 @@ __all__ = [
     'render_ai_report_json',
     'render_entry_result',
     'render_live_price_panel',
+    'render_performance_summary',
     'render_profile_pnl_dashboard',
     'render_trade_date_controls',
     'render_trade_event_cards',

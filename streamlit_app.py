@@ -1881,12 +1881,14 @@ with tab4:
     if _led:
         _ldf = pd.DataFrame(sorted(_led.values(), key=lambda x: str(x.get("date", "")), reverse=True))
         _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
-                                    "pnl": "손익USD", "recovered": "회수USD", "source": "출처", "first_seen": "기록시각"})
+                                    "resolved": "결과", "pnl": "손익USD", "category": "카테고리",
+                                    "source": "출처", "updated_at": "갱신시각"})
         st.download_button(
             t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
             data=_ldf.to_csv(index=False).encode("utf-8-sig"),
             file_name="memento_trade_ledger.csv", mime="text/csv",
             use_container_width=True, key="ledger_download_btn")
+    render_performance_summary()
     st.markdown("<hr>", unsafe_allow_html=True)
 
     if st.session_state.get("journal_mode") not in ("wallet", "paste"):
