@@ -1,19 +1,70 @@
-# 🎈 Blank app template
+# Memento — 폴리마켓 거래복기 · 리스크 관리 도구
 
-A simple Streamlit app template for you to modify!
+내 폴리마켓 베팅을 **이성적으로, 덜 잃도록** 돕는 개인용 도구입니다.
+핵심 목표는 "수익 극대화"가 아니라 **계좌 생존**(감정적 큰 손실 방지) + **거래복기로 배우기**.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+> ⚠️ **Python 3.12 이상 필요** (코드가 3.12 문법을 사용). Streamlit Cloud로 배포 중.
 
-### How to run it on your own machine
+---
 
-1. Install the requirements
+## 🗂️ 파일이 하는 일 (제일 중요)
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+이 앱은 한 덩어리였던 코드를 **역할별 파일**로 나눠 두었습니다. 각 파일이 무슨 일을 하는지:
 
-2. Run the app
+| 파일 | 한 줄 설명 | 자세히 |
+|------|-----------|--------|
+| **`streamlit_app.py`** | 앱 본체 (화면 흐름) | 페이지 설정 → 디자인(CSS) → 상태 불러오기 → **지갑 자동 동기화** → 사이드바(오늘 운용) → **7개 탭**(진입판독·AI리서치·포트폴리오·부분매도·거래일지·거래복기·설정). 다른 파일의 기능들을 불러와 화면에 배치합니다. |
+| **`config.py`** | 설정·상수 | 기본값(`DEFAULTS`), **저장할 항목 목록**(`PERSIST_KEYS`), 기본 리스크 프로필, 카테고리 분류 키워드 등. |
+| **`state.py`** | 저장 / 불러오기 | 내 데이터(거래·설정·장부)를 `memento_state.json` 파일에 **자동 저장**하고 다시 불러옵니다. |
+| **`ui.py`** | 공용 표시 도구 | 다국어(`t`), 금액 표시(`money`), 카드·미터·라벨 같은 **작은 화면 조각**을 만드는 기본 도구. |
+| **`engine.py`** | 계산 두뇌 🧠 | 진입 판독(`calculate_entry`), 켈리 사이징, **손실 한도·틸트·잠금**, 손익 계산(`group_auto_trades_for_pnl`), **승/패 확정**(`resolve_trade_row`), **거래장부**(`update_trade_ledger`), **승패·카테고리 성과**(`performance_summary`), 포트폴리오 분석. |
+| **`data.py`** | 외부 통신·데이터 정리 | 폴리마켓 지갑·시세 가져오기(`fetch_*`), Claude AI 호출(`call_claude`), 거래내역 파싱·정규화. |
+| **`views.py`** | 화면 렌더 | 진입 판독 결과(`render_entry_result`), 거래 손익 카드(`render_trade_pnl_summary`), **성과 요약**(`render_performance_summary`), 포트폴리오 패널 등 **큰 화면 덩어리**. 지갑 동기화(`sync_wallet`)도 여기. |
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+**불러오는 순서(의존 방향):** `config` → `state` → `ui` → `engine` → `data` → `views` → `streamlit_app`
+(위에서 아래로만 의존하므로 서로 꼬이지(순환참조) 않습니다.)
+
+---
+
+## 🔧 "이걸 바꾸려면 어디를 봐야 하지?" 빠른 안내
+
+| 바꾸고 싶은 것 | 볼 파일 |
+|----------------|---------|
+| 진입 판독 점수·규칙 (켈리, 손실한도, 틸트 등) | `engine.py` (`calculate_entry`) |
+| 손익 계산 방식 / 승·패 처리 | `engine.py` (`group_auto_trades_for_pnl`, `resolve_trade_row`) |
+| 승패·카테고리 성과 집계 | `engine.py` (`performance_summary`) |
+| 화면 문구·배치·탭 구성 | `streamlit_app.py`, `views.py` |
+| 색·폰트·디자인 | `streamlit_app.py` 맨 위 CSS 블록 |
+| 기본값·저장할 항목 | `config.py` (`DEFAULTS`, `PERSIST_KEYS`) |
+| 폴리마켓·AI 연결 | `data.py` |
+
+---
+
+## 💾 내 데이터는 어디에?
+
+- 모든 거래·설정·**거래장부**는 `memento_state.json`(로컬 파일)에 **매 실행마다 자동 저장**됩니다.
+- 지갑 주소를 한 번 저장해두면, 앱을 열거나 새로고침할 때 **자동으로 거래를 동기화**(중복 없이)해 장부에 쌓습니다.
+- 한 번 장부에 들어온 거래는 **폴리마켓에서 사라져도 보존**됩니다. (거래일지 탭에서 CSV로 내려받기 가능)
+
+---
+
+## ▶️ 실행 방법
+
+```bash
+# 1) 라이브러리 설치
+pip install -r requirements.txt
+
+# 2) 실행
+streamlit run streamlit_app.py
+```
+
+---
+
+## 🧩 주요 기능 요약
+
+- **진입 판독** — 진입 전 리스크 점검 + 켈리 추천 베팅액
+- **생존 가드레일** — 일일 손실 한도 차단 · 연속 손실(틸트) 차단 · 손실 연동 베팅 축소 · "오늘 그만" 잠금
+- **거래일지** — 지갑 자동 동기화 + 손익 계산 + 승/패 확정 + **승패·카테고리 성과**
+- **거래복기** — 거래별 진입근거·감정·교훈 기록
+- **거래장부** — 영구 보존 + CSV 다운로드
+- **AI 리서치** — Claude로 시장 해석·체크리스트 (선택)
