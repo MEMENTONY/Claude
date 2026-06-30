@@ -1048,35 +1048,115 @@ def recent_completed_trade_rows(limit=None):
     return completed[:max(int(limit or 0), 0)]
 
 
+def resolve_trade_row(r):
+    """Apply the user's manual win/lost mark to a grouped trade row and return the final
+    realized P&L + status. Unmarked -> the existing auto/settlement values (behavior unchanged).
+    won  : remaining shares redeem at $1  -> realized = current + (remaining_shares - remaining_cost)
+    lost : remaining shares expire at $0  -> realized = current - remaining_cost"""
+    rem = _display_remaining_shares(r)
+    rem_cost = _display_remaining_cost(r)
+    cur = _display_realized(r)
+    cur = cur if cur is not None else 0.0
+    try:
+        mark = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
+    except Exception:
+        mark = ""
+    if mark == "won":
+        return {"resolved": "won", "realized_final": round(cur + (rem - rem_cost), 2),
+                "status_final": t("승(상환)", "Won (redeemed)"), "remaining_final": 0.0}
+    if mark == "lost":
+        return {"resolved": "lost", "realized_final": round(cur - rem_cost, 2),
+                "status_final": t("패(소멸)", "Lost (expired)"), "remaining_final": 0.0}
+    return {"resolved": "", "realized_final": _display_realized(r),
+            "status_final": r.get("adjusted_status") or r.get("status", ""), "remaining_final": rem}
+
+
 def update_trade_ledger():
-    """Durably accumulate completed trades into a local ledger so the record survives
-    Polymarket dropping old data. Idempotent: merges by a stable per-trade key and never
-    deletes. The bottom-of-script save_local_state() then writes it to disk. Fails soft."""
+    """Durable per-trade realized-P&L ledger that survives Polymarket dropping old data.
+    Upserts each settled trade (closed by sells OR manually marked won/lost) by its stable
+    group key; never deletes, so dropped trades stay. The bottom-of-script save_local_state()
+    persists it. Fails soft. Returns the ledger size."""
     try:
         ledger = st.session_state.get("trade_ledger")
         if not isinstance(ledger, dict):
             ledger = {}
-        added = 0
-        for r in recent_completed_trade_rows(limit=None):
-            pnl = round(_safe_float(r.get("pnl"), 0.0), 2)
-            recovered = round(_safe_float(r.get("recovered"), 0.0), 2)
-            key = f'{r.get("market", "")}|{r.get("outcome", "")}|{r.get("latest_dt", "")}|{pnl}|{recovered}'
-            if key not in ledger:
+        sources = [
+            (t("지갑", "Wallet"), st.session_state.get("auto_trades", []), st.session_state.get("activity_events", []) or []),
+            (t("붙여넣기", "Paste"), st.session_state.get("paste_trades", []), st.session_state.get("paste_events", []) or []),
+        ]
+        for label, trades, events in sources:
+            rows = group_auto_trades_for_pnl(trades)
+            if events:
+                rows = link_settlement_events_to_trade_groups(rows, events)
+            for r in rows:
+                res = resolve_trade_row(r)
+                closed_by_sell = res["remaining_final"] <= 1e-6 and _display_sold_shares(r) > 0
+                if not (res["resolved"] or closed_by_sell):
+                    continue
+                pnl = res["realized_final"]
+                if pnl is None:
+                    continue
+                key = str(r.get("key") or f'{r.get("market", "")}|{r.get("outcome", "")}')
                 ledger[key] = {
-                    "date": r.get("latest_dt", ""),
-                    "market": r.get("market", ""),
-                    "outcome": r.get("outcome", ""),
-                    "status": r.get("status", ""),
-                    "pnl": pnl,
-                    "recovered": recovered,
-                    "source": r.get("source", ""),
-                    "first_seen": datetime.now(KST).isoformat(timespec="minutes"),
+                    "date": str(r.get("latest_dt") or ""),
+                    "market": r.get("market", "") or t("이름 없는 거래", "Unnamed trade"),
+                    "outcome": r.get("outcome", "") or "-",
+                    "status": res["status_final"],
+                    "resolved": res["resolved"],
+                    "pnl": round(_safe_float(pnl, 0.0), 2),
+                    "category": infer_market_category("", r.get("market", "")),
+                    "source": label,
+                    "updated_at": datetime.now(KST).isoformat(timespec="minutes"),
                 }
-                added += 1
         st.session_state.trade_ledger = ledger
-        return added
+        return len(ledger)
     except Exception:
         return 0
+
+
+def performance_summary(ledger=None):
+    """Win/loss + category performance from the durable ledger. Dedupes by market+outcome so
+    older ledger key formats cannot double-count. Fails soft."""
+    try:
+        led = ledger if isinstance(ledger, dict) else (st.session_state.get("trade_ledger") or {})
+        uniq = {}
+        for v in led.values():
+            if not isinstance(v, dict):
+                continue
+            k = (str(v.get("market", "")).strip().lower(), str(v.get("outcome", "")).strip().lower())
+            if k not in uniq or str(v.get("updated_at", "")) >= str(uniq[k].get("updated_at", "")):
+                uniq[k] = v
+        recs = [v for v in uniq.values() if v.get("pnl") is not None]
+        wins = [r for r in recs if _safe_float(r.get("pnl"), 0) > 0]
+        losses = [r for r in recs if _safe_float(r.get("pnl"), 0) < 0]
+        gross_win = sum(_safe_float(r.get("pnl"), 0) for r in wins)
+        gross_loss = -sum(_safe_float(r.get("pnl"), 0) for r in losses)
+        n = len(recs)
+        cats = {}
+        for r in recs:
+            cat = str(r.get("category") or "").strip() or t("기타", "Other")
+            c = cats.setdefault(cat, {"pnl": 0.0, "wins": 0, "losses": 0, "n": 0})
+            p = _safe_float(r.get("pnl"), 0)
+            c["pnl"] += p
+            c["n"] += 1
+            if p > 0:
+                c["wins"] += 1
+            elif p < 0:
+                c["losses"] += 1
+        return {
+            "n": n, "wins": len(wins), "losses": len(losses),
+            "win_rate": (len(wins) / n * 100.0) if n else 0.0,
+            "total_pnl": round(gross_win - gross_loss, 2),
+            "gross_win": round(gross_win, 2), "gross_loss": round(gross_loss, 2),
+            "avg_win": round(gross_win / len(wins), 2) if wins else 0.0,
+            "avg_loss": round(gross_loss / len(losses), 2) if losses else 0.0,
+            "profit_factor": (gross_win / gross_loss) if gross_loss > 1e-9 else None,
+            "by_category": cats,
+        }
+    except Exception:
+        return {"n": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "total_pnl": 0.0,
+                "gross_win": 0.0, "gross_loss": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+                "profit_factor": None, "by_category": {}}
 
 def today_anchor_timestamp():
     """Timestamp for the selected operating anchor, if one has been stored."""
@@ -1356,5 +1436,7 @@ __all__ = [
     'tilt_status',
     'day_is_locked',
     'update_trade_ledger',
+    'resolve_trade_row',
+    'performance_summary',
     'visible_portfolio_positions',
 ]
