@@ -693,6 +693,30 @@ def summarize_selected_trade_groups(rows, selected_keys):
     return {"buy_cost": buy_cost, "sell_proceeds": proceeds, "realized_pnl": realized,
             "remaining_shares": remaining, "remaining_cost": remaining_cost, "unverified": any_unverified}
 
+def summarize_selected_resolved(rows, selected_keys):
+    """Combined P&L for the selected trade groups, applying each row's manual
+    won/lost resolution so the total matches the resolved numbers shown on the
+    per-trade cards. Fails soft on any bad row."""
+    keyset = {k for k in (selected_keys or [])}
+    sel = [r for r in rows if r.get("key") in keyset]
+    buy_cost = sum(safe_trade_float(r.get("buy_cost"), 0) for r in sel)
+    proceeds = sum(safe_trade_float(r.get("adjusted_effective_proceeds", r.get("sell_proceeds")), 0) for r in sel)
+    finals, remaining, remaining_cost = [], 0.0, 0.0
+    for r in sel:
+        try:
+            res = resolve_trade_row(r)
+        except Exception:
+            res = {"realized_final": _display_realized(r), "remaining_final": _display_remaining_shares(r)}
+        finals.append(res.get("realized_final"))
+        rem = safe_trade_float(res.get("remaining_final"), 0)
+        remaining += rem
+        if rem > 1e-6:
+            remaining_cost += _display_remaining_cost(r)
+    realized = sum(safe_trade_float(v, 0) for v in finals if v is not None)
+    return {"n": len(sel), "buy_cost": buy_cost, "sell_proceeds": proceeds,
+            "realized_pnl": realized, "remaining_shares": remaining,
+            "remaining_cost": remaining_cost, "unverified": any(v is None for v in finals)}
+
 def _safe_review_id_part(v):
     s = re.sub(r"\s+", "_", str(v or "").strip().lower())
     s = re.sub(r"[^0-9a-zA-Z가-힣_\-.]+", "", s)
@@ -1429,6 +1453,7 @@ __all__ = [
     'size_thresholds',
     'sort_trades_newest_first',
     'summarize_selected_trade_groups',
+    'summarize_selected_resolved',
     'today_anchor_timestamp',
     'today_loss_limit_status',
     'today_operating_metrics',

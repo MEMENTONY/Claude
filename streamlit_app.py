@@ -835,6 +835,31 @@ div[data-testid="stDataFrame"] * , div[data-testid="stDataEditor"] * {
   div[data-testid="stTabs"] [data-baseweb="tab-list"] { width: 100%; }
 }
 
+/* Sticky action bar for selected journal trades — sits at the bottom of the
+   viewport so it's reachable without scrolling to the end of a long list. */
+[class*="st-key-mmt_actionbar_"] {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 16px;
+  z-index: 90;
+  width: min(680px, 92vw);
+  background: linear-gradient(180deg, rgba(255,255,255,.97) 0%, rgba(248,249,252,.94) 100%);
+  border: 1px solid rgba(226,228,235,.95);
+  border-radius: 20px;
+  box-shadow: 0 1px 1px rgba(20,22,30,.05), 0 18px 46px rgba(20,22,30,.16);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  padding: 12px 16px 10px 16px !important;
+}
+.mmt-actionbar-label {
+  margin: 0 0 8px 0; font-size: 12px; font-weight: 760;
+  letter-spacing: .04em; color: var(--gray); text-align: center;
+}
+.mmt-resolve-saved {
+  margin: 2px 0 4px 0; font-size: 12px; font-weight: 700; color: var(--green);
+}
+
 </style>
 """,
     unsafe_allow_html=True,
