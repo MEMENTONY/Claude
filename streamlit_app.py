@@ -2592,6 +2592,83 @@ with tab_set:
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # ---- Google Sheets backup ----
+    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업", "Google Sheets backup")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 한 방향(앱→시트) 백업합니다. 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "One-way backup (app→sheet) of your trade ledger to your own Google Sheet, so records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
+
+    _gs = gsheet_status()
+    if _gs["ready"]:
+        st.markdown(line(t(f"연결 준비됨 · 서비스계정 {_gs['email']}", f"Ready · service account {_gs['email']}"), "g"), unsafe_allow_html=True)
+    else:
+        _need = []
+        if not _gs["lib"]:
+            _need.append(t("gspread 설치(재배포) 필요", "install gspread (redeploy)"))
+        if not _gs["creds"]:
+            _need.append(t("Secrets에 gcp_service_account 필요", "add gcp_service_account to Secrets"))
+        if not _gs["has_url"]:
+            _need.append(t("아래 시트 주소 입력 필요", "enter the sheet URL below"))
+        st.markdown(line(t("설정 필요: ", "Setup needed: ") + " · ".join(_need), "w"), unsafe_allow_html=True)
+
+    with st.expander(t("① 처음 한 번 설정하는 법 (서비스 계정)", "① One-time setup (service account)")):
+        st.markdown(t(
+            r"""1. Google Cloud Console → 새 프로젝트 → **Google Sheets API** 사용 설정.
+2. **서비스 계정** 생성 → 키(JSON) 발급 → 다운로드.
+3. Streamlit Cloud → *Manage app → Settings → Secrets* 에 JSON 내용을 아래 형식으로 붙여넣기:
+```toml
+[gcp_service_account]
+type = "service_account"
+project_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "xxxx@xxxx.iam.gserviceaccount.com"
+# (JSON의 나머지 필드도 모두 그대로)
+```
+4. 구글 시트를 하나 만들고, 위 **client_email 주소를 '편집자'로 공유**.
+5. 그 시트의 주소(URL)를 아래에 붙여넣고 **저장** → 완료.""",
+            r"""1. Google Cloud Console → new project → enable **Google Sheets API**.
+2. Create a **service account** → create a JSON key → download it.
+3. In Streamlit Cloud → *Manage app → Settings → Secrets*, paste the JSON as TOML:
+```toml
+[gcp_service_account]
+type = "service_account"
+project_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "xxxx@xxxx.iam.gserviceaccount.com"
+# (all other JSON fields too)
+```
+4. Create a Google Sheet and **share it (Editor) with that client_email**.
+5. Paste the sheet URL below and **Save** → done."""))
+
+    st.session_state.gsheet_url = st.text_input(
+        t("구글 시트 주소 (URL)", "Google Sheet URL"),
+        value=str(st.session_state.get("gsheet_url", "") or ""),
+        placeholder="https://docs.google.com/spreadsheets/d/....",
+        key="gsheet_url_input",
+    )
+    st.session_state.gsheet_autobackup = st.checkbox(
+        t("앱 열 때 자동 백업 (세션당 1회)", "Auto-backup on app load (once per session)"),
+        value=bool(st.session_state.get("gsheet_autobackup", False)),
+        help=t("켜두면 새로고침만 해도 최신 거래장부가 시트에 저장됩니다.", "When on, just refreshing keeps the sheet updated."),
+    )
+    _gs_last = str(st.session_state.get("_gsheet_last_backup", "") or "")
+    _gs_lastn = int(st.session_state.get("_gsheet_last_count", 0) or 0)
+    if _gs_last:
+        st.markdown(f'<div class="footnote">{t(f"마지막 백업: {_gs_last} · {_gs_lastn}건", f"Last backup: {_gs_last} · {_gs_lastn} rows")}</div>', unsafe_allow_html=True)
+
+    if st.button(t("지금 구글 시트로 백업", "Back up to Google Sheets now"), use_container_width=True, key="gsheet_backup_now"):
+        _b = backup_ledger_to_gsheet(force=True)
+        if _b["ok"]:
+            st.success(t(f"백업 완료 · {_b['written']}건을 시트에 저장했습니다.", f"Backed up · {_b['written']} rows written."))
+        else:
+            _emap = {
+                "no_lib": t("gspread 미설치 — requirements 반영 후 재배포하세요.", "gspread not installed — redeploy after requirements update."),
+                "no_creds": t("Secrets에 gcp_service_account가 없습니다.", "Missing gcp_service_account in Secrets."),
+                "no_url": t("시트 주소를 먼저 입력하세요.", "Enter the sheet URL first."),
+                "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
+            }
+            st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
     # ---- developer mode ----
     st.markdown(f'<div class="eyebrow">{t("개발자 모드", "Developer mode")}</div>', unsafe_allow_html=True)
     st.session_state.dev_mode = st.checkbox(
@@ -2966,5 +3043,22 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True,
 )
+
+# Optional once-per-session Google Sheets backup. Runs at the very bottom, after the
+# ledger (update_trade_ledger) is refreshed this run. Fully fail-soft: a missing
+# library / secret / sheet / network can NEVER break the app boot.
+try:
+    if st.session_state.get("gsheet_autobackup") and not st.session_state.get("_gsheet_autobacked"):
+        st.session_state._gsheet_autobacked = True
+        if gsheet_status()["ready"]:
+            _gb = backup_ledger_to_gsheet(force=False)
+            if _gb.get("ok") and _gb.get("written"):
+                try:
+                    st.toast(t(f"구글 시트 자동 백업 · {_gb['written']}건 저장",
+                               f"Google Sheets auto-backup · {_gb['written']} rows"))
+                except Exception:
+                    pass
+except Exception:
+    pass
 
 save_local_state()

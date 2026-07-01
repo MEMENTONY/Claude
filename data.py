@@ -1174,7 +1174,112 @@ def habit_report(trades):
                                 "Some buys were above 80¢. Check whether you risked too much for limited upside.")))
     return {**sm, "habit_level": level, "habit_title": title, "habit_insights": insights}
 
+# ---------------------------------------------------------------------------
+# Google Sheets backup — mirror the durable trade ledger to a Google Sheet.
+# One-way (app -> sheet), service-account auth via Streamlit Secrets.
+# gspread/google-auth are imported lazily and every entry point is fail-soft, so
+# a missing library / secret / sheet / network can NEVER break the app boot.
+# ---------------------------------------------------------------------------
+GSHEET_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+GSHEET_LEDGER_HEADER = ["날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "출처", "갱신시각"]
+GSHEET_LEDGER_FIELDS = ["date", "market", "outcome", "status", "resolved", "pnl", "category", "source", "updated_at"]
+
+def _gsheet_service_account_info():
+    """Service-account dict from Streamlit Secrets (key: gcp_service_account), or None."""
+    try:
+        sa = st.secrets.get("gcp_service_account", None)
+    except Exception:
+        return None
+    if not sa:
+        return None
+    try:
+        return dict(sa)
+    except Exception:
+        return None
+
+def gsheet_target_url():
+    """Target spreadsheet URL/key: prefer the in-app setting, fall back to secrets."""
+    u = str(st.session_state.get("gsheet_url", "") or "").strip()
+    if u:
+        return u
+    try:
+        return str(st.secrets.get("gsheet_url", "") or "").strip()
+    except Exception:
+        return ""
+
+def gsheet_status():
+    """Readiness snapshot for the Settings UI. Never raises."""
+    lib = True
+    try:
+        import gspread  # noqa: F401
+        from google.oauth2.service_account import Credentials  # noqa: F401
+    except Exception:
+        lib = False
+    sa = _gsheet_service_account_info()
+    email = ""
+    if sa:
+        try:
+            email = str(sa.get("client_email", "") or "")
+        except Exception:
+            email = ""
+    url = gsheet_target_url()
+    return {"lib": lib, "creds": bool(sa), "email": email, "url": url,
+            "has_url": bool(url), "ready": bool(lib and sa and url)}
+
+def _gsheet_open_worksheet():
+    """Authorize and open (or create) the 'ledger' worksheet of the target sheet. Raises on failure."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+    sa = _gsheet_service_account_info()
+    creds = Credentials.from_service_account_info(sa, scopes=GSHEET_SCOPES)
+    gc = gspread.authorize(creds)
+    url = gsheet_target_url()
+    sh = gc.open_by_url(url) if url.startswith("http") else gc.open_by_key(url)
+    try:
+        ws = sh.worksheet("ledger")
+    except Exception:
+        ws = sh.add_worksheet(title="ledger", rows=200, cols=len(GSHEET_LEDGER_HEADER))
+    return ws
+
+def backup_ledger_to_gsheet(force=False):
+    """Mirror st.session_state.trade_ledger into the Google Sheet (full overwrite = idempotent,
+    dedup-free). Returns {"ok","error","written"}. Any failure -> ok False with a reason string."""
+    s = gsheet_status()
+    if not s["lib"]:
+        return {"ok": False, "error": "no_lib", "written": 0}
+    if not s["creds"]:
+        return {"ok": False, "error": "no_creds", "written": 0}
+    if not s["has_url"]:
+        return {"ok": False, "error": "no_url", "written": 0}
+    ledger = st.session_state.get("trade_ledger") or {}
+    if not isinstance(ledger, dict):
+        ledger = {}
+    if not ledger and not force:
+        return {"ok": False, "error": "empty_ledger", "written": 0}
+    try:
+        rows = sorted(ledger.values(), key=lambda x: str(x.get("date", "")), reverse=True)
+        body = [GSHEET_LEDGER_HEADER]
+        for rec in rows:
+            if isinstance(rec, dict):
+                body.append([str(rec.get(f, "")) for f in GSHEET_LEDGER_FIELDS])
+        ws = _gsheet_open_worksheet()
+        ws.clear()
+        ws.append_rows(body, value_input_option="RAW")
+        st.session_state["_gsheet_last_backup"] = datetime.now(KST).isoformat(timespec="minutes")
+        st.session_state["_gsheet_last_count"] = len(rows)
+        return {"ok": True, "error": "", "written": len(rows)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "written": 0}
+
 __all__ = [
+    'GSHEET_LEDGER_FIELDS',
+    'GSHEET_LEDGER_HEADER',
+    'GSHEET_SCOPES',
+    '_gsheet_open_worksheet',
+    '_gsheet_service_account_info',
+    'backup_ledger_to_gsheet',
+    'gsheet_status',
+    'gsheet_target_url',
     '_activity_action',
     '_activity_asset',
     '_activity_dt',
