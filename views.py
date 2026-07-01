@@ -516,82 +516,38 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 
 
 def _render_trade_action_bar(rows, selected_rows, source, key_prefix):
-    """Sticky bottom bar shown when >=1 journal trade is checked: merge the P&L of
-    the selection, or send them to Trade Review — reachable without scrolling to
-    the end of a long list."""
+    """Fixed bottom box shown the moment >=1 journal trade is checked: the live merged
+    P&L of the selection (always visible, no extra click) + a send-to-review button.
+    Stays on screen so nothing needs scrolling to the end of the list."""
     if not selected_rows:
         return
     n = len(selected_rows)
-    merge_click = False
+    s = summarize_selected_resolved(rows, [r.get("key") for r in selected_rows])
+    realized = s["realized_pnl"]
+    tone = "pos" if realized >= 0 else "neg"
+    warn = (f'<div class="mmt-bar-warn">{t("일부 거래는 확인 필요라 합계에서 제외됨", "some trades excluded — need review")}</div>'
+            if s["unverified"] else "")
     with st.container(key=f"mmt_actionbar_{key_prefix}"):
         st.markdown(
-            f'<div class="mmt-actionbar-label">{t(f"선택 {n}건", f"{n} selected")}</div>',
+            f'<div class="mmt-bar-head">'
+            f'<span class="mmt-bar-count">{t(f"선택 {n}건 · 손익 합계", f"{n} selected · merged P&L")}</span>'
+            f'<span class="mmt-bar-pnl {tone}">{signed_money(realized)}</span>'
+            f'</div>'
+            f'<div class="mmt-bar-metrics">'
+            f'<span><i>{t("매수금", "Cost")}</i>{money(s["buy_cost"])}</span>'
+            f'<span><i>{t("회수금", "Recovered")}</i>{money(s["sell_proceeds"])}</span>'
+            f'<span><i>{t("잔여", "Remaining")}</i>{s["remaining_shares"]:.2f}</span>'
+            f'</div>{warn}',
             unsafe_allow_html=True,
         )
-        if n >= 2:
-            # 2+ selected: send to review AND merge P&L
-            ac_send, ac_merge = st.columns(2)
-            with ac_merge:
-                merge_click = st.button(t("🔗 손익 합치기", "🔗 Merge P&L"),
-                                        key=f"merge_pnl_{key_prefix}", use_container_width=True)
-            with ac_send:
-                send_click = st.button(t("📝 거래복기로 보내기", "📝 Send to Review"),
-                                       key=f"send_review_bar_{key_prefix}", use_container_width=True)
-        else:
-            # only 1 selected: merging a single trade is meaningless → send only
-            send_click = st.button(t("📝 거래복기로 보내기", "📝 Send to Review"),
-                                   key=f"send_review_bar_{key_prefix}", use_container_width=True)
-    # Normal-flow spacer so the fixed bar never hides the last trade card.
-    st.markdown('<div style="height:120px;"></div>', unsafe_allow_html=True)
+        send_click = st.button(t("📝 거래복기로 보내기", "📝 Send to Review"),
+                               key=f"send_review_bar_{key_prefix}", use_container_width=True)
+    # Normal-flow spacer so the fixed box never hides the last trade card.
+    st.markdown('<div style="height:180px;"></div>', unsafe_allow_html=True)
     if send_click:
         added = add_review_items_from_trade_groups(selected_rows, source)
-        if added:
-            st.toast(t(f"거래복기에 {added}건을 보냈습니다.", f"Sent {added} trade(s) to Trade Review."))
-        else:
-            st.toast(t("이미 거래복기에 있는 항목입니다.", "Selected trade(s) already in Trade Review."))
-    if merge_click:
-        _show_merged_pnl(rows, selected_rows)
-
-
-def _show_merged_pnl(rows, selected_rows):
-    """Popup (or inline fallback) with the combined, resolution-aware P&L of the
-    selected trades."""
-    s = summarize_selected_resolved(rows, [r.get("key") for r in selected_rows])
-
-    def _body():
-        st.markdown(
-            '<div class="stats">'
-            + stat(t("선택 거래", "Trades"), f'{s["n"]}', "")
-            + stat(t("총 매수금", "Buy cost"), money(s["buy_cost"]), "")
-            + stat(t("총 회수금", "Recovered"), money(s["sell_proceeds"]), t("매도금+정산금", "proceeds+settlement"))
-            + stat(t("실현손익 합계", "Merged realized"), signed_money(s["realized_pnl"]),
-                   t("승/패 확정 반영", "resolutions applied"), "pos" if s["realized_pnl"] >= 0 else "neg")
-            + stat(t("잔여 노출", "Remaining"), f'{s["remaining_shares"]:.2f}',
-                   t(f"원가 {money(s['remaining_cost'])}", f"cost {money(s['remaining_cost'])}"))
-            + "</div>", unsafe_allow_html=True)
-        if s["unverified"]:
-            st.markdown(line(t("일부 거래는 손익 확인이 필요해 합계에서 제외되었습니다.",
-                               "Some trades need review and were excluded from the total."), "w"),
-                        unsafe_allow_html=True)
-        for r in selected_rows:
-            try:
-                pv = resolve_trade_row(r)["realized_final"]
-            except Exception:
-                pv = None
-            pv_txt = t("확인 필요", "Verify") if pv is None else signed_money(pv)
-            st.markdown(
-                f'<div class="footnote" style="margin:2px 0;">• {esc(r.get("market"))} · '
-                f'{esc(r.get("outcome"))} — <b>{pv_txt}</b></div>', unsafe_allow_html=True)
-
-    title = t("선택 거래 손익 합계", "Merged P&L of selected trades")
-    if hasattr(st, "dialog"):
-        try:
-            st.dialog(title)(_body)()
-            return
-        except Exception:
-            pass
-    st.markdown(f'<div class="eyebrow" style="margin-top:12px;">{title}</div>', unsafe_allow_html=True)
-    _body()
+        st.toast(t(f"거래복기에 {added}건을 보냈습니다.", f"Sent {added} trade(s) to Trade Review.") if added
+                 else t("이미 거래복기에 있는 항목입니다.", "Selected trade(s) already in Trade Review."))
 
 def render_performance_summary(key_prefix="perf"):
     """All-time win/loss + category performance from the durable trade ledger."""
@@ -1371,7 +1327,6 @@ __all__ = [
     '_on_trade_qf_change',
     '_render_trade_action_bar',
     '_selected_entry_form',
-    '_show_merged_pnl',
     'market_card_html',
     'portfolio_card_html',
     'portfolio_side_panel_html',

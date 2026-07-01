@@ -852,10 +852,21 @@ div[data-testid="stDataFrame"] * , div[data-testid="stDataEditor"] * {
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   padding: 12px 16px 10px 16px !important;
 }
-.mmt-actionbar-label {
-  margin: 0 0 8px 0; font-size: 12px; font-weight: 760;
-  letter-spacing: .04em; color: var(--gray); text-align: center;
+.mmt-bar-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  margin: 0 0 6px 0;
 }
+.mmt-bar-count { font-size: 12.5px; font-weight: 760; letter-spacing: .01em; color: var(--gray); }
+.mmt-bar-pnl { font-size: 22px; font-weight: 820; letter-spacing: -.02em; }
+.mmt-bar-pnl.pos { color: var(--green); }
+.mmt-bar-pnl.neg { color: var(--red); }
+.mmt-bar-metrics {
+  display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 10px 0;
+  font-size: 12.5px; color: var(--ink, #1a1c22); font-weight: 640;
+}
+.mmt-bar-metrics span { display: inline-flex; align-items: baseline; gap: 6px; }
+.mmt-bar-metrics i { font-style: normal; font-size: 11px; font-weight: 650; color: var(--gray2, #9aa0ab); }
+.mmt-bar-warn { margin: -2px 0 8px 0; font-size: 11.5px; font-weight: 650; color: var(--amber, #a45e07); }
 .mmt-resolve-saved {
   margin: 2px 0 4px 0; font-size: 12px; font-weight: 700; color: var(--green);
 }
@@ -2632,11 +2643,46 @@ with tab_set:
 
     # ---- Google Sheets ledger sync ----
     st.markdown(f'<div class="eyebrow">{t("Google Sheets 장부 연동", "Google Sheets ledger sync")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 8px 0;">{t("Google Cloud에서 서비스 계정을 만들어 JSON 키를 받은 뒤, 아래에 통째로 붙여넣으면 앱 안에서 바로 연동됩니다. (Streamlit Secrets에 넣어도 됩니다.)", "Create a Google Cloud service account, download its JSON key, and paste the whole thing below to connect right inside the app. (Streamlit Secrets also works.)")}</div>', unsafe_allow_html=True)
+    with st.expander(t("서비스 계정 JSON 붙여넣기 (앱 내 설정)", "Paste service account JSON (in-app setup)"),
+                     expanded=not bool(gsheet_client_email())):
+        _sa_input = st.text_area(
+            t("서비스 계정 JSON", "Service account JSON"),
+            value=str(st.session_state.get("gsheet_sa_json", "") or ""),
+            height=150, key="gsheet_sa_json_input",
+            placeholder='{\n  "type": "service_account",\n  "client_email": "...@....iam.gserviceaccount.com",\n  "private_key": "-----BEGIN PRIVATE KEY-----\\n..."\n}',
+        )
+        _sa_c1, _sa_c2 = st.columns(2)
+        with _sa_c1:
+            if st.button(t("자격증명 저장", "Save credentials"), use_container_width=True, key="gsheet_sa_save_btn"):
+                _txt = str(_sa_input or "").strip()
+                if not _txt:
+                    st.session_state.gsheet_sa_json = ""
+                    save_local_state()
+                    st.markdown(line(t("자격증명을 비웠습니다.", "Cleared credentials."), "i"), unsafe_allow_html=True)
+                else:
+                    try:
+                        _parsed = json.loads(_txt)
+                        _ok = isinstance(_parsed, dict) and _parsed.get("client_email") and _parsed.get("private_key")
+                    except Exception:
+                        _ok = False
+                    if _ok:
+                        st.session_state.gsheet_sa_json = _txt
+                        save_local_state()
+                        st.markdown(line(t(f"저장 완료 — 서비스 계정: {_parsed.get('client_email')}", f"Saved — service account: {_parsed.get('client_email')}"), "g"), unsafe_allow_html=True)
+                    else:
+                        st.markdown(line(t("JSON 형식이 아니거나 client_email/private_key가 없습니다.", "Not valid JSON, or missing client_email/private_key."), "b"), unsafe_allow_html=True)
+        with _sa_c2:
+            if st.button(t("자격증명 지우기", "Clear credentials"), use_container_width=True, key="gsheet_sa_clear_btn"):
+                st.session_state.gsheet_sa_json = ""
+                save_local_state()
+                st.rerun()
+        st.markdown(f'<div class="footnote">{t("붙여넣은 키는 이 기기의 로컬 상태파일에만 저장되고, 백업 내려받기 파일에는 포함되지 않습니다.", "The pasted key is stored only in this device\'s local state file and is never included in the backup download.")}</div>', unsafe_allow_html=True)
     _gs_email = gsheet_client_email()
     if not _gs_email:
         st.markdown(line(t(
-            "서비스 계정 자격증명이 없습니다. Google Cloud에서 서비스 계정을 만들고, JSON 키를 Streamlit Secrets의 [gcp_service_account] 테이블에 붙여넣으세요.",
-            "No service account configured. Create a Google Cloud service account and paste its JSON key into the [gcp_service_account] table in Streamlit Secrets."), "w"), unsafe_allow_html=True)
+            "아직 서비스 계정이 연결되지 않았습니다. 위에 JSON을 붙여넣거나 Streamlit Secrets의 [gcp_service_account]에 넣으세요.",
+            "No service account connected yet. Paste the JSON above, or add it under [gcp_service_account] in Streamlit Secrets."), "w"), unsafe_allow_html=True)
     else:
         st.markdown(line(t(
             f"서비스 계정 준비됨. 아래 시트를 이 이메일과 '편집자'로 공유하세요: {_gs_email}",

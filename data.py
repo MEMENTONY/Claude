@@ -44,8 +44,21 @@ def get_api_key():
 # Google Sheets ledger sync (optional — degrades gracefully with no creds)
 # =====================================================
 def _gsheet_creds_info():
-    """Service-account dict from Streamlit secrets, or None. Never logged/echoed.
-    Accepts a TOML table or a JSON string under a few common secret names."""
+    """Service-account dict, or None. Never logged/echoed. Checks in-app pasted JSON
+    first (Settings tab), then Streamlit secrets (TOML table or JSON string)."""
+    # 1) in-app: user pasted the service-account JSON directly in the Settings tab
+    try:
+        pasted = str(st.session_state.get("gsheet_sa_json", "") or "").strip()
+    except Exception:
+        pasted = ""
+    if pasted:
+        try:
+            info = json.loads(pasted)
+            if isinstance(info, dict) and info.get("client_email") and info.get("private_key"):
+                return info
+        except Exception:
+            pass
+    # 2) Streamlit secrets
     for key in ("gcp_service_account", "google_service_account", "gsheets_service_account", "gsheets"):
         try:
             v = st.secrets.get(key, None)
