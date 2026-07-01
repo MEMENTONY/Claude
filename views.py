@@ -648,11 +648,6 @@ def today_dashboard_html(metrics):
         f'<div class="s">{esc(stop_mode_text)} · {esc(stop_left_text)}</div>'
         f'<div class="today-progress-track"><div class="today-progress-fill loss" style="width:{metrics["stop_progress_bar"]:.1f}%"></div></div>'
         f'</div>'
-        f'<div class="today-dash-cell">'
-        f'<div class="k">{t("운용 시작 기준", "Operating anchor")}</div>'
-        f'<div class="v">{esc(metrics["anchor_label"])}</div>'
-        f'<div class="s">{esc(anchor_text)}</div>'
-        f'</div>'
         f'</div>'
     )
 
