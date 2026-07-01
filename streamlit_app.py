@@ -53,13 +53,13 @@ st.markdown(
   --hairline:  #e9eaee;
   --hairline-2:#f0f1f4;
 
-  --accent:      #3b4ef0;   /* deep indigo — the one accent */
-  --accent-press:#2c3ed4;
-  --accent-soft: #eef0fe;
+  --accent:      #2f6fed;   /* Polymarket-style clean blue — the one accent */
+  --accent-press:#2357cc;
+  --accent-soft: #e8f0fe;
 
-  --green:      #0f7a43;  --green-soft: #e7f5ec;  --green-soft2:#eaf6f0;
+  --green:      #12924f;  --green-soft: #e6f6ec;  --green-soft2:#e9f7ef;
   --amber:      #a45e07;  --amber-soft: #fdf3e3;
-  --red:        #c5362f;  --red-soft:   #fdeeed;
+  --red:        #dc2f2a;  --red-soft:   #fdECEB;
 
   --radius-s: 10px;
   --radius-m: 16px;
@@ -441,9 +441,12 @@ h1,h2,h3,h4,p,span,div,label { color: var(--ink); }
 /* ---------- portfolio + activity cards ---------- */
 .pf-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; margin: 10px 0 20px 0; }
 .pf-card {
-  border: 1px solid var(--hairline); border-radius: var(--radius-l);
-  padding: 19px 20px; background: var(--surface); box-shadow: var(--shadow-1);
+  border: 1px solid var(--hairline-2); border-radius: var(--radius-l);
+  padding: 20px 22px; background: var(--surface);
+  box-shadow: 0 1px 2px rgba(20,22,30,.03), 0 8px 22px rgba(20,22,30,.045);
+  transition: box-shadow .16s ease, border-color .16s ease;
 }
+.pf-card:hover { box-shadow: 0 1px 2px rgba(20,22,30,.04), 0 12px 30px rgba(20,22,30,.07); border-color: var(--hairline); }
 .pf-card-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom: 14px; }
 .pf-title { font-size: 15px; font-weight: 700; letter-spacing: -.018em; line-height: 1.35; }
 .pf-sub   { margin-top: 5px; font-size: 12.5px; color: var(--gray); line-height: 1.45; }
@@ -561,9 +564,10 @@ div[data-testid="stWidgetLabel"] p { font-size: 12.5px !important; font-weight: 
 
 .stButton > button, .stFormSubmitButton > button {
   background: var(--accent) !important; color: #fff !important;
-  border: none !important; border-radius: 12px !important;
-  font-size: 14.5px !important; font-weight: 680 !important;
-  min-height: 45px; box-shadow: none !important; transition: background .16s ease, transform .12s ease !important;
+  border: none !important; border-radius: 14px !important;
+  font-size: 14.5px !important; font-weight: 720 !important;
+  min-height: 47px; box-shadow: 0 1px 2px rgba(20,22,30,.05), 0 6px 16px rgba(47,111,237,.14) !important;
+  transition: background .16s ease, transform .12s ease, box-shadow .16s ease !important;
 }
 .stButton > button:hover, .stFormSubmitButton > button:hover { background: var(--accent-press) !important; color:#fff !important; transform: translateY(-1px); }
 div[data-testid="stDownloadButton"] > button {
