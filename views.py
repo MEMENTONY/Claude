@@ -463,19 +463,22 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                 label_visibility="collapsed",
             )
         with cbody:
+            _pnl_color = "#9aa0aa" if pnl is None else ("#16a34a" if pnl >= 0 else "#dc2626")
             st.markdown(
                 f'''<div class="pf-card" style="margin:10px 0;">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
-      <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)}</div>
+      <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)} · {esc(status_text)}</div>
     </div>
-    <span class="state {pnl_cls}">{esc(status_text)}</span>
+    <div style="text-align:right;min-width:96px;">
+      <div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>
+      <div class="pf-sub">{pnl_label}</div>
+    </div>
   </div>
   <div class="pf-metrics">
     <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
     <div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>
-    <div class="pf-metric"><div class="k">{pnl_label}</div><div class="v">{pnl_text}</div></div>
     <div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>
     <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
     <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>

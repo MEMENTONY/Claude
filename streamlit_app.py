@@ -1672,15 +1672,20 @@ with st.sidebar:
 
 st.markdown(today_dashboard_html(today_operating_metrics()), unsafe_allow_html=True)
 
-tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
+tab1, _tab_pf_top, tab_rec, tab_ai, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
-    t("AI 리서치", "AI research"),
     t("포트폴리오", "Portfolio"),
-    t("부분매도", "Partial sell"),
-    t("거래일지", "Journal"),
-    t("거래복기", "Trade Review"),
+    t("기록", "Records"),
+    t("AI 리서치", "AI research"),
     t("설정 · 도구", "Settings · tools"),
 ])
+# 7 -> 5 tabs: 부분매도 folds under 포트폴리오, 거래일지+거래복기 fold under 기록.
+# Sub-tabs are created here; the existing `with tab3/tab_pf/tab4/tab_review:` blocks below
+# render into them unchanged.
+with _tab_pf_top:
+    tab_pf, tab3 = st.tabs([t("보유 · 손익", "Holdings & P&L"), t("부분매도", "Partial sell")])
+with tab_rec:
+    tab4, tab_review = st.tabs([t("거래일지", "Journal"), t("거래복기", "Trade Review")])
 
 
 # =====================================================
