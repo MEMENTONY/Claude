@@ -455,6 +455,20 @@ h1,h2,h3,h4,p,span,div,label { color: var(--ink); }
 .pf-metric .v { margin-top: 4px; font-size: 14px; font-weight: 700; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .pf-note { font-size: 12.5px; line-height: 1.6; color: var(--ink2); padding-top: 12px; border-top: 1px solid var(--hairline); }
 
+/* Polymarket-style outcome / price pills (color-coded chips) */
+.pf-pills { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.pill { display:inline-flex; align-items:center; padding:2px 10px; border-radius:999px;
+  font-size:12px; font-weight:700; line-height:1.7; letter-spacing:.01em; white-space:nowrap; }
+.pill.blue   { background:#e8edfe; color:#2c47d6; }
+.pill.green  { background:#e6f5ec; color:#0f7a43; }
+.pill.red    { background:#fdeaea; color:#c5362f; }
+.pill.amber  { background:#fbf0dc; color:#a45e07; }
+.pill.purple { background:#f0e9fd; color:#6d3bd1; }
+.pill.teal   { background:#e0f3f1; color:#0d7a70; }
+.price-pill { display:inline-flex; align-items:center; padding:2px 9px; border-radius:999px;
+  background:var(--surface-2); color:var(--ink2); font-weight:700; font-size:12px;
+  font-variant-numeric:tabular-nums; }
+
 .trade-grid { display:grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 10px 0 16px 0; }
 .trade-card { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 16px; background: var(--surface); box-shadow: var(--shadow-1); }
 .trade-card .k { font-size: 11.5px; color: var(--gray); }

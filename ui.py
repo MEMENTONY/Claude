@@ -91,6 +91,24 @@ def grade_word(kind):
 def esc(v):
     return html.escape(str(v or ""), quote=True)
 
+_PILL_PALETTE = ("blue", "green", "red", "amber", "purple", "teal")
+
+def outcome_pill(name):
+    """Polymarket-style colored chip for a market outcome. Color is deterministic per
+    outcome name (like team colors), so the same outcome always reads the same."""
+    s = str(name or "").strip()
+    if not s:
+        return ""
+    idx = sum(ord(c) for c in s) % len(_PILL_PALETTE)
+    return f'<span class="pill {_PILL_PALETTE[idx]}">{esc(s)}</span>'
+
+def cents_pill(v):
+    """Small neutral price chip in cents (Polymarket-style)."""
+    try:
+        return f'<span class="price-pill">{cents(float(v or 0))}</span>'
+    except (TypeError, ValueError):
+        return ""
+
 def self_check_scale():
     try:
         scale = int(st.session_state.get("self_check_scale", 5) or 5)
@@ -102,10 +120,13 @@ def self_check_scale_help():
     return t("1 = 매우 낮음 · 중간 = 보통 · 최대 = 매우 높음", "1 = very low · middle = normal · max = very high")
 
 __all__ = [
+    '_PILL_PALETTE',
     '_display_money_value',
     'cents',
+    'cents_pill',
     'clamp',
     'esc',
+    'outcome_pill',
     'grade_word',
     'line',
     'meter',

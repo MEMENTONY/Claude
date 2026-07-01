@@ -468,7 +468,8 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
-      <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)} · {esc(status_text)}</div>
+      <div class="pf-pills">{outcome_pill(r.get("outcome"))}{cents_pill(r.get("avg_buy_price", 0))}</div>
+      <div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>
     </div>
     <div style="text-align:right;min-width:96px;">
       <div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>
