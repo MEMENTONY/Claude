@@ -522,16 +522,23 @@ def _render_trade_action_bar(rows, selected_rows, source, key_prefix):
     if not selected_rows:
         return
     n = len(selected_rows)
+    merge_click = False
     with st.container(key=f"mmt_actionbar_{key_prefix}"):
         st.markdown(
             f'<div class="mmt-actionbar-label">{t(f"선택 {n}건", f"{n} selected")}</div>',
             unsafe_allow_html=True,
         )
-        ac_merge, ac_send = st.columns(2)
-        with ac_merge:
-            merge_click = st.button(t("🔗 손익 합치기", "🔗 Merge P&L"),
-                                    key=f"merge_pnl_{key_prefix}", use_container_width=True)
-        with ac_send:
+        if n >= 2:
+            # 2+ selected: send to review AND merge P&L
+            ac_send, ac_merge = st.columns(2)
+            with ac_merge:
+                merge_click = st.button(t("🔗 손익 합치기", "🔗 Merge P&L"),
+                                        key=f"merge_pnl_{key_prefix}", use_container_width=True)
+            with ac_send:
+                send_click = st.button(t("📝 거래복기로 보내기", "📝 Send to Review"),
+                                       key=f"send_review_bar_{key_prefix}", use_container_width=True)
+        else:
+            # only 1 selected: merging a single trade is meaningless → send only
             send_click = st.button(t("📝 거래복기로 보내기", "📝 Send to Review"),
                                    key=f"send_review_bar_{key_prefix}", use_container_width=True)
     # Normal-flow spacer so the fixed bar never hides the last trade card.
