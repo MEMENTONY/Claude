@@ -102,6 +102,8 @@ DEFAULTS = {
     "day_locked_date": "",
     "trade_ledger": {},
     "trade_resolutions": {},
+    "gsheet_url": "",
+    "gsheet_autobackup": False,
 }
 
 LOCAL_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memento_state.json")
@@ -122,6 +124,8 @@ PERSIST_KEYS = [
     "day_locked_date",
     "trade_ledger",
     "trade_resolutions",
+    "gsheet_url",
+    "gsheet_autobackup",
 ]
 
 GAME_RE = re.compile(r"\b(game|map)\s*[1-5]\b", re.I)

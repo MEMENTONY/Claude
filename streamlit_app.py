@@ -455,6 +455,20 @@ h1,h2,h3,h4,p,span,div,label { color: var(--ink); }
 .pf-metric .v { margin-top: 4px; font-size: 14px; font-weight: 700; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .pf-note { font-size: 12.5px; line-height: 1.6; color: var(--ink2); padding-top: 12px; border-top: 1px solid var(--hairline); }
 
+/* Polymarket-style outcome / price pills (color-coded chips) */
+.pf-pills { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.pill { display:inline-flex; align-items:center; padding:2px 10px; border-radius:999px;
+  font-size:12px; font-weight:700; line-height:1.7; letter-spacing:.01em; white-space:nowrap; }
+.pill.blue   { background:#e8edfe; color:#2c47d6; }
+.pill.green  { background:#e6f5ec; color:#0f7a43; }
+.pill.red    { background:#fdeaea; color:#c5362f; }
+.pill.amber  { background:#fbf0dc; color:#a45e07; }
+.pill.purple { background:#f0e9fd; color:#6d3bd1; }
+.pill.teal   { background:#e0f3f1; color:#0d7a70; }
+.price-pill { display:inline-flex; align-items:center; padding:2px 9px; border-radius:999px;
+  background:var(--surface-2); color:var(--ink2); font-weight:700; font-size:12px;
+  font-variant-numeric:tabular-nums; }
+
 .trade-grid { display:grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 10px 0 16px 0; }
 .trade-card { border: 1px solid var(--hairline); border-radius: var(--radius-m); padding: 16px; background: var(--surface); box-shadow: var(--shadow-1); }
 .trade-card .k { font-size: 11.5px; color: var(--gray); }
@@ -1537,115 +1551,118 @@ with st.sidebar:
             f'</div>',
             unsafe_allow_html=True)
 
-        if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), use_container_width=True, key="sync_today_start_from_portfolio"):
-            now_label = datetime.now(KST).isoformat(timespec="minutes")
-            st.session_state.today_anchor_mode = "next"
-            st.session_state.today_anchor_key = ""
-            st.session_state.today_anchor_label = t("현재 포트폴리오 기준", "Current portfolio basis")
-            st.session_state.today_anchor_time = now_label
-            st.session_state.today_anchor_set_at = now_label
-            st.session_state.today_start_cash = float(panel_current_assets)
-            st.session_state.today_cash_adjustment = max(float(panel_current_assets) - _today_current_basis, 0.0)
-            st.rerun()
-
-        start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
-                                     min_value=0.0, key="today_start_cash",
-                                     on_change=sync_today_cash_adjustment)
-        st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
-                        min_value=0.0, key="today_stop_loss_amount")
-        st.checkbox(
-            t("손실만 기준으로 보기 (이익 합치기 X)", "Use loss-only stop (ignore gains)"),
-            key="today_stop_loss_gross_only",
-        )
-
-        goal_mode = st.radio(
-            t("목표 금액 입력 방식", "Goal input"),
-            ["percent", "amount"],
-            format_func=lambda mo: t("시작 현금의 %", "% of start cash") if mo == "percent" else t("직접 입력 ($)", "Direct ($)"),
-            key="today_goal_mode", horizontal=True,
-        )
-        if goal_mode == "percent":
-            goal_pct = st.number_input(t("목표 (시작 현금의 %)", "Goal (% of start cash)"),
-                                       min_value=0.0, key="today_goal_pct")
-            goal_amount = start_cash * goal_pct / 100.0
-        else:
-            goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
-                                          min_value=0.0, key="today_goal_amount")
-            goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
-
-        stop_now = _safe_float(st.session_state.get("today_stop_loss_amount"), 0.0)
-        anchor_note = t(f"상단 바에는 목표 {money(goal_amount)} · 중단 {money(stop_now)} 기준으로 표시됩니다.",
-                        f"Top bar uses goal {money(goal_amount)} · stop {money(stop_now)}.")
-        st.markdown(f'<div class="today-anchor-note">{esc(anchor_note)}</div>', unsafe_allow_html=True)
-
-        st.markdown(f'<div class="today-control-label">{t("오늘 시작 기준", "Today start anchor")}</div>', unsafe_allow_html=True)
-        anchor_rows = recent_completed_trade_rows(limit=10)
-        anchor_by_key = {r["key"]: r for r in anchor_rows}
-        anchor_options = ["__next__"] + [r["key"] for r in anchor_rows]
-        stored_anchor_key = str(st.session_state.get("today_anchor_key") or "")
-        if stored_anchor_key and stored_anchor_key not in anchor_options:
-            anchor_options.append(stored_anchor_key)
-
-        def _anchor_option_label(key):
-            if key == "__next__":
-                return t("다음 거래부터 운용 기준 적용", "Apply from the next trade")
-            row = anchor_by_key.get(key)
-            if row:
-                when = str(row.get("latest_dt") or "-")[:16]
-                market = str(row.get("market") or t("이름 없는 거래", "Unnamed trade"))
-                if len(market) > 40:
-                    market = market[:39] + "…"
-                return f'{market} · {row.get("outcome", "-")} · {signed_money(_safe_float(row.get("pnl"), 0.0))} · {when}'
-            return st.session_state.get("today_anchor_label") or t("저장된 기준 거래", "Saved anchor trade")
-
-        current_anchor_select = st.session_state.get("today_anchor_select")
-        if current_anchor_select not in anchor_options:
-            st.session_state.today_anchor_select = stored_anchor_key if stored_anchor_key in anchor_options else "__next__"
-
-        selected_anchor = st.selectbox(
-            t("기준 선택", "Anchor"),
-            anchor_options,
-            format_func=_anchor_option_label,
-            key="today_anchor_select",
-            label_visibility="collapsed",
-        )
-
-        ac1, ac2 = st.columns(2)
-        with ac1:
-            if st.button(t("다음 거래부터", "From next trade"), use_container_width=True, key="set_anchor_next_trade"):
+        _limits_set = panel_start_cash > 0 and panel_stop_loss > 0
+        with st.expander(t("기준 입력 · 수정", "Edit limits"), expanded=not _limits_set):
+            if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), use_container_width=True, key="sync_today_start_from_portfolio"):
                 now_label = datetime.now(KST).isoformat(timespec="minutes")
                 st.session_state.today_anchor_mode = "next"
                 st.session_state.today_anchor_key = ""
-                st.session_state.today_anchor_label = t("다음 거래부터", "From next trade")
+                st.session_state.today_anchor_label = t("현재 포트폴리오 기준", "Current portfolio basis")
                 st.session_state.today_anchor_time = now_label
                 st.session_state.today_anchor_set_at = now_label
-                st.session_state._pending_today_start_cash = float(panel_current_assets)
-                st.toast(t("현재 포트폴리오를 시작점으로 저장했습니다.", "Saved current portfolio as the start."))
+                st.session_state.today_start_cash = float(panel_current_assets)
+                st.session_state.today_cash_adjustment = max(float(panel_current_assets) - _today_current_basis, 0.0)
                 st.rerun()
-        with ac2:
-            selected_row = anchor_by_key.get(selected_anchor)
-            if st.button(t("선택 거래부터", "From selected"), use_container_width=True,
-                         disabled=selected_row is None, key="set_anchor_selected_trade"):
-                all_completed = recent_completed_trade_rows(limit=None)
-                anchor_ts = _safe_float(selected_row.get("_latest_ts"), -1.0)
-                pnl_since_anchor = sum(
-                    _safe_float(r.get("pnl"), 0.0)
-                    for r in all_completed
-                    if _safe_float(r.get("_latest_ts"), -1.0) >= anchor_ts - 1e-6
-                )
-                inferred_start = max(float(panel_current_assets) - pnl_since_anchor, 0.0)
-                market_label = str(selected_row.get("market") or t("이름 없는 거래", "Unnamed trade"))
-                if len(market_label) > 42:
-                    market_label = market_label[:41] + "…"
-                anchor_label = f'{market_label} · {selected_row.get("outcome", "-")}'
-                st.session_state.today_anchor_mode = "trade"
-                st.session_state.today_anchor_key = selected_row["key"]
-                st.session_state.today_anchor_label = anchor_label
-                st.session_state.today_anchor_time = str(selected_row.get("latest_dt") or "")
-                st.session_state.today_anchor_set_at = datetime.now(KST).isoformat(timespec="minutes")
-                st.session_state._pending_today_start_cash = float(inferred_start)
-                st.toast(t("선택한 거래를 오늘 운용 기준으로 저장했습니다.", "Saved the selected trade as today's anchor."))
-                st.rerun()
+
+            start_cash = st.number_input(t("오늘 시작 현금 ($)", "Starting cash today ($)"),
+                                         min_value=0.0, key="today_start_cash",
+                                         on_change=sync_today_cash_adjustment)
+            st.number_input(t("손실 시 중단 금액 ($)", "Stop-trading loss ($)"),
+                            min_value=0.0, key="today_stop_loss_amount")
+            st.checkbox(
+                t("손실만 기준으로 보기 (이익 합치기 X)", "Use loss-only stop (ignore gains)"),
+                key="today_stop_loss_gross_only",
+            )
+
+            goal_mode = st.radio(
+                t("목표 금액 입력 방식", "Goal input"),
+                ["percent", "amount"],
+                format_func=lambda mo: t("시작 현금의 %", "% of start cash") if mo == "percent" else t("직접 입력 ($)", "Direct ($)"),
+                key="today_goal_mode", horizontal=True,
+            )
+            if goal_mode == "percent":
+                goal_pct = st.number_input(t("목표 (시작 현금의 %)", "Goal (% of start cash)"),
+                                           min_value=0.0, key="today_goal_pct")
+                goal_amount = start_cash * goal_pct / 100.0
+            else:
+                goal_amount = st.number_input(t("목표 금액 ($)", "Goal amount ($)"),
+                                              min_value=0.0, key="today_goal_amount")
+                goal_pct = (goal_amount / start_cash * 100.0) if start_cash > 0 else 0.0
+
+            stop_now = _safe_float(st.session_state.get("today_stop_loss_amount"), 0.0)
+            anchor_note = t(f"상단 바에는 목표 {money(goal_amount)} · 중단 {money(stop_now)} 기준으로 표시됩니다.",
+                            f"Top bar uses goal {money(goal_amount)} · stop {money(stop_now)}.")
+            st.markdown(f'<div class="today-anchor-note">{esc(anchor_note)}</div>', unsafe_allow_html=True)
+
+        with st.expander(t("오늘 시작 기준 · 상세 설정", "Start anchor · details"), expanded=False):
+            st.markdown(f'<div class="today-control-label">{t("오늘 시작 기준", "Today start anchor")}</div>', unsafe_allow_html=True)
+            anchor_rows = recent_completed_trade_rows(limit=10)
+            anchor_by_key = {r["key"]: r for r in anchor_rows}
+            anchor_options = ["__next__"] + [r["key"] for r in anchor_rows]
+            stored_anchor_key = str(st.session_state.get("today_anchor_key") or "")
+            if stored_anchor_key and stored_anchor_key not in anchor_options:
+                anchor_options.append(stored_anchor_key)
+
+            def _anchor_option_label(key):
+                if key == "__next__":
+                    return t("다음 거래부터 운용 기준 적용", "Apply from the next trade")
+                row = anchor_by_key.get(key)
+                if row:
+                    when = str(row.get("latest_dt") or "-")[:16]
+                    market = str(row.get("market") or t("이름 없는 거래", "Unnamed trade"))
+                    if len(market) > 40:
+                        market = market[:39] + "…"
+                    return f'{market} · {row.get("outcome", "-")} · {signed_money(_safe_float(row.get("pnl"), 0.0))} · {when}'
+                return st.session_state.get("today_anchor_label") or t("저장된 기준 거래", "Saved anchor trade")
+
+            current_anchor_select = st.session_state.get("today_anchor_select")
+            if current_anchor_select not in anchor_options:
+                st.session_state.today_anchor_select = stored_anchor_key if stored_anchor_key in anchor_options else "__next__"
+
+            selected_anchor = st.selectbox(
+                t("기준 선택", "Anchor"),
+                anchor_options,
+                format_func=_anchor_option_label,
+                key="today_anchor_select",
+                label_visibility="collapsed",
+            )
+
+            ac1, ac2 = st.columns(2)
+            with ac1:
+                if st.button(t("다음 거래부터", "From next trade"), use_container_width=True, key="set_anchor_next_trade"):
+                    now_label = datetime.now(KST).isoformat(timespec="minutes")
+                    st.session_state.today_anchor_mode = "next"
+                    st.session_state.today_anchor_key = ""
+                    st.session_state.today_anchor_label = t("다음 거래부터", "From next trade")
+                    st.session_state.today_anchor_time = now_label
+                    st.session_state.today_anchor_set_at = now_label
+                    st.session_state._pending_today_start_cash = float(panel_current_assets)
+                    st.toast(t("현재 포트폴리오를 시작점으로 저장했습니다.", "Saved current portfolio as the start."))
+                    st.rerun()
+            with ac2:
+                selected_row = anchor_by_key.get(selected_anchor)
+                if st.button(t("선택 거래부터", "From selected"), use_container_width=True,
+                             disabled=selected_row is None, key="set_anchor_selected_trade"):
+                    all_completed = recent_completed_trade_rows(limit=None)
+                    anchor_ts = _safe_float(selected_row.get("_latest_ts"), -1.0)
+                    pnl_since_anchor = sum(
+                        _safe_float(r.get("pnl"), 0.0)
+                        for r in all_completed
+                        if _safe_float(r.get("_latest_ts"), -1.0) >= anchor_ts - 1e-6
+                    )
+                    inferred_start = max(float(panel_current_assets) - pnl_since_anchor, 0.0)
+                    market_label = str(selected_row.get("market") or t("이름 없는 거래", "Unnamed trade"))
+                    if len(market_label) > 42:
+                        market_label = market_label[:41] + "…"
+                    anchor_label = f'{market_label} · {selected_row.get("outcome", "-")}'
+                    st.session_state.today_anchor_mode = "trade"
+                    st.session_state.today_anchor_key = selected_row["key"]
+                    st.session_state.today_anchor_label = anchor_label
+                    st.session_state.today_anchor_time = str(selected_row.get("latest_dt") or "")
+                    st.session_state.today_anchor_set_at = datetime.now(KST).isoformat(timespec="minutes")
+                    st.session_state._pending_today_start_cash = float(inferred_start)
+                    st.toast(t("선택한 거래를 오늘 운용 기준으로 저장했습니다.", "Saved the selected trade as today's anchor."))
+                    st.rerun()
 
     show_today_panel = st.session_state.get("side_panel_mode") == "panels" and st.session_state.get("side_panel_section") == "today"
     show_portfolio_panel = st.session_state.get("side_panel_mode") == "panels" and st.session_state.get("side_panel_section") == "portfolio"
@@ -1669,15 +1686,20 @@ with st.sidebar:
 
 st.markdown(today_dashboard_html(today_operating_metrics()), unsafe_allow_html=True)
 
-tab1, tab_ai, tab_pf, tab3, tab4, tab_review, tab_set = st.tabs([
+tab1, _tab_pf_top, tab_rec, tab_ai, tab_set = st.tabs([
     t("진입 판독", "Entry check"),
-    t("AI 리서치", "AI research"),
     t("포트폴리오", "Portfolio"),
-    t("부분매도", "Partial sell"),
-    t("거래일지", "Journal"),
-    t("거래복기", "Trade Review"),
+    t("기록", "Records"),
+    t("AI 리서치", "AI research"),
     t("설정 · 도구", "Settings · tools"),
 ])
+# 7 -> 5 tabs: 부분매도 folds under 포트폴리오, 거래일지+거래복기 fold under 기록.
+# Sub-tabs are created here; the existing `with tab3/tab_pf/tab4/tab_review:` blocks below
+# render into them unchanged.
+with _tab_pf_top:
+    tab_pf, tab3 = st.tabs([t("보유 · 손익", "Holdings & P&L"), t("부분매도", "Partial sell")])
+with tab_rec:
+    tab4, tab_review = st.tabs([t("거래일지", "Journal"), t("거래복기", "Trade Review")])
 
 
 # =====================================================
@@ -1703,11 +1725,11 @@ with tab1:
         unsafe_allow_html=True,
     )
 
-    # --- day lock: one-click commitment device, survives reload, auto-clears tomorrow ---
+    # --- compact status: lock button + only the banner that needs action (less noise) ---
     if day_is_locked():
         st.markdown(line(t(
-            "🔒 오늘 베팅 잠금 상태 — 신규 진입이 차단됩니다. 잘하고 있어요. 내일 다시.",
-            "Locked for today — new entries are blocked. Well done; come back tomorrow."), "b"),
+            "🔒 오늘 베팅 잠금 — 신규 진입 차단. 잘하고 있어요, 내일 다시.",
+            "Locked for today — new entries blocked. Well done; back tomorrow."), "b"),
             unsafe_allow_html=True)
         with st.expander(t("잠금 해제 (권장하지 않음)", "Unlock (not recommended)")):
             if st.checkbox(t("오늘은 쉬기로 했지만 정말 해제합니다", "I really do want to unlock"), key="entry_unlock_confirm"):
@@ -1716,41 +1738,28 @@ with tab1:
                     save_local_state()
                     st.rerun()
     else:
-        _lk1, _lk2 = st.columns([1, 3])
+        _ll = today_loss_limit_status()
+        _tilt = tilt_status()
+        if _ll["hit"]:
+            _msg, _kind = t(f"손실 한도 도달 ({money(_ll['used'])}/{money(_ll['stop'])}) — 오늘은 멈추세요.",
+                            f"Daily loss limit hit ({money(_ll['used'])}/{money(_ll['stop'])}) — stop for today."), "b"
+        elif _tilt["level"] == "stop":
+            _msg, _kind = t(f"최근 {_tilt['streak']}연속 손실 — 쿨다운 권장.",
+                            f"{_tilt['streak']} losses in a row — cool down."), "b"
+        elif _tilt["level"] == "warn":
+            _msg, _kind = t(f"최근 {_tilt['streak']}연속 손실 — 추격 베팅 주의.",
+                            f"{_tilt['streak']} losses in a row — watch tilt."), "w"
+        else:
+            _msg, _kind = "", ""
+        _lk1, _lk2 = st.columns([1, 4])
         with _lk1:
             if st.button(t("🔒 오늘 그만", "🔒 Lock today"), key="entry_lock_btn", use_container_width=True):
                 st.session_state.day_locked_date = datetime.now(KST).date().isoformat()
                 save_local_state()
                 st.rerun()
         with _lk2:
-            st.markdown(line(t(
-                "충동이 올라오면 누르세요 — 오늘 남은 시간 진입을 잠급니다(새로고침해도 유지).",
-                "Hit this when the urge rises — it locks entries for the rest of today (survives refresh)."), "i"),
-                unsafe_allow_html=True)
-
-    _ll = today_loss_limit_status()
-    if _ll["hit"]:
-        st.markdown(line(t(
-            f"오늘 손실 {money(_ll['used'])} / 한도 {money(_ll['stop'])} 도달 — 오늘은 신규 진입을 멈추는 게 생존 규율입니다.",
-            f"Lost {money(_ll['used'])} of your {money(_ll['stop'])} daily limit — stopping now is the disciplined call."), "b"),
-            unsafe_allow_html=True)
-    elif not _ll["set"]:
-        st.markdown(line(t(
-            "일일 손실 한도가 설정되지 않았습니다. 설정해두면 한도 도달 시 자동으로 진입을 차단해 드립니다.",
-            "No daily loss limit set — set one and entries auto-block when you hit it."), "i"),
-            unsafe_allow_html=True)
-
-    _tilt = tilt_status()
-    if _tilt["level"] == "stop":
-        st.markdown(line(t(
-            f"최근 {_tilt['streak']}연속 손실 — 쿨다운을 권합니다. 잠시 시장에서 떨어지세요.",
-            f"{_tilt['streak']} losses in a row — take a cooldown and step away."), "b"),
-            unsafe_allow_html=True)
-    elif _tilt["level"] == "warn":
-        st.markdown(line(t(
-            f"최근 {_tilt['streak']}연속 손실 — 추격 베팅(틸트)을 조심하세요.",
-            f"{_tilt['streak']} losses in a row — watch out for tilt."), "w"),
-            unsafe_allow_html=True)
+            if _msg:
+                st.markdown(line(_msg, _kind), unsafe_allow_html=True)
 
     u1, u2 = st.columns([4, 1])
     with u1:
@@ -2597,6 +2606,83 @@ with tab_set:
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # ---- Google Sheets backup ----
+    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업", "Google Sheets backup")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 한 방향(앱→시트) 백업합니다. 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "One-way backup (app→sheet) of your trade ledger to your own Google Sheet, so records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
+
+    _gs = gsheet_status()
+    if _gs["ready"]:
+        st.markdown(line(t(f"연결 준비됨 · 서비스계정 {_gs['email']}", f"Ready · service account {_gs['email']}"), "g"), unsafe_allow_html=True)
+    else:
+        _need = []
+        if not _gs["lib"]:
+            _need.append(t("gspread 설치(재배포) 필요", "install gspread (redeploy)"))
+        if not _gs["creds"]:
+            _need.append(t("Secrets에 gcp_service_account 필요", "add gcp_service_account to Secrets"))
+        if not _gs["has_url"]:
+            _need.append(t("아래 시트 주소 입력 필요", "enter the sheet URL below"))
+        st.markdown(line(t("설정 필요: ", "Setup needed: ") + " · ".join(_need), "w"), unsafe_allow_html=True)
+
+    with st.expander(t("① 처음 한 번 설정하는 법 (서비스 계정)", "① One-time setup (service account)")):
+        st.markdown(t(
+            r"""1. Google Cloud Console → 새 프로젝트 → **Google Sheets API** 사용 설정.
+2. **서비스 계정** 생성 → 키(JSON) 발급 → 다운로드.
+3. Streamlit Cloud → *Manage app → Settings → Secrets* 에 JSON 내용을 아래 형식으로 붙여넣기:
+```toml
+[gcp_service_account]
+type = "service_account"
+project_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "xxxx@xxxx.iam.gserviceaccount.com"
+# (JSON의 나머지 필드도 모두 그대로)
+```
+4. 구글 시트를 하나 만들고, 위 **client_email 주소를 '편집자'로 공유**.
+5. 그 시트의 주소(URL)를 아래에 붙여넣고 **저장** → 완료.""",
+            r"""1. Google Cloud Console → new project → enable **Google Sheets API**.
+2. Create a **service account** → create a JSON key → download it.
+3. In Streamlit Cloud → *Manage app → Settings → Secrets*, paste the JSON as TOML:
+```toml
+[gcp_service_account]
+type = "service_account"
+project_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "xxxx@xxxx.iam.gserviceaccount.com"
+# (all other JSON fields too)
+```
+4. Create a Google Sheet and **share it (Editor) with that client_email**.
+5. Paste the sheet URL below and **Save** → done."""))
+
+    st.session_state.gsheet_url = st.text_input(
+        t("구글 시트 주소 (URL)", "Google Sheet URL"),
+        value=str(st.session_state.get("gsheet_url", "") or ""),
+        placeholder="https://docs.google.com/spreadsheets/d/....",
+        key="gsheet_url_input",
+    )
+    st.session_state.gsheet_autobackup = st.checkbox(
+        t("앱 열 때 자동 백업 (세션당 1회)", "Auto-backup on app load (once per session)"),
+        value=bool(st.session_state.get("gsheet_autobackup", False)),
+        help=t("켜두면 새로고침만 해도 최신 거래장부가 시트에 저장됩니다.", "When on, just refreshing keeps the sheet updated."),
+    )
+    _gs_last = str(st.session_state.get("_gsheet_last_backup", "") or "")
+    _gs_lastn = int(st.session_state.get("_gsheet_last_count", 0) or 0)
+    if _gs_last:
+        st.markdown(f'<div class="footnote">{t(f"마지막 백업: {_gs_last} · {_gs_lastn}건", f"Last backup: {_gs_last} · {_gs_lastn} rows")}</div>', unsafe_allow_html=True)
+
+    if st.button(t("지금 구글 시트로 백업", "Back up to Google Sheets now"), use_container_width=True, key="gsheet_backup_now"):
+        _b = backup_ledger_to_gsheet(force=True)
+        if _b["ok"]:
+            st.success(t(f"백업 완료 · {_b['written']}건을 시트에 저장했습니다.", f"Backed up · {_b['written']} rows written."))
+        else:
+            _emap = {
+                "no_lib": t("gspread 미설치 — requirements 반영 후 재배포하세요.", "gspread not installed — redeploy after requirements update."),
+                "no_creds": t("Secrets에 gcp_service_account가 없습니다.", "Missing gcp_service_account in Secrets."),
+                "no_url": t("시트 주소를 먼저 입력하세요.", "Enter the sheet URL first."),
+                "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
+            }
+            st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
     # ---- developer mode ----
     st.markdown(f'<div class="eyebrow">{t("개발자 모드", "Developer mode")}</div>', unsafe_allow_html=True)
     st.session_state.dev_mode = st.checkbox(
@@ -2971,5 +3057,22 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True,
 )
+
+# Optional once-per-session Google Sheets backup. Runs at the very bottom, after the
+# ledger (update_trade_ledger) is refreshed this run. Fully fail-soft: a missing
+# library / secret / sheet / network can NEVER break the app boot.
+try:
+    if st.session_state.get("gsheet_autobackup") and not st.session_state.get("_gsheet_autobacked"):
+        st.session_state._gsheet_autobacked = True
+        if gsheet_status()["ready"]:
+            _gb = backup_ledger_to_gsheet(force=False)
+            if _gb.get("ok") and _gb.get("written"):
+                try:
+                    st.toast(t(f"구글 시트 자동 백업 · {_gb['written']}건 저장",
+                               f"Google Sheets auto-backup · {_gb['written']} rows"))
+                except Exception:
+                    pass
+except Exception:
+    pass
 
 save_local_state()

@@ -433,7 +433,6 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         st.markdown(line(t("일부 정산 항목은 금액 정보가 없어 손익 확인이 필요합니다.", "Some settlement rows have no amount; P&L needs review."), "w"), unsafe_allow_html=True)
     st.markdown(f'<div class="footnote">{t("추정치입니다. 공식 포트폴리오 손익과 별개이며 아직 합산하지 않습니다.", "Estimate only. Separate from official portfolio P&L; not merged yet.")}</div>', unsafe_allow_html=True)
 
-    selected_for_review = []
     source = "wallet" if str(key_prefix or "").startswith("wallet") else "paste"
     for idx, r in enumerate(rows):
         res = resolve_trade_row(r)
@@ -457,25 +456,29 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
         rid = make_review_id_from_trade_group(r, source)
         csel, cbody = st.columns([0.28, 3.72])
         with csel:
-            send_flag = st.checkbox(
-                t("거래복기로 보내기", "Send to review"),
+            open_flag = st.checkbox(
+                t("손익 계산 열기", "Open P&L"),
                 key=f"review_send_{key_prefix}_{idx}_{rid}",
                 label_visibility="collapsed",
             )
         with cbody:
+            _pnl_color = "#9aa0aa" if pnl is None else ("#16a34a" if pnl >= 0 else "#dc2626")
             st.markdown(
                 f'''<div class="pf-card" style="margin:10px 0;">
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(r.get("market"))}</div>
-      <div class="pf-sub">{esc(r.get("outcome"))} · {esc(latest)}</div>
+      <div class="pf-pills">{outcome_pill(r.get("outcome"))}{cents_pill(r.get("avg_buy_price", 0))}</div>
+      <div class="pf-sub">{esc(latest)} · {esc(status_text)}</div>
     </div>
-    <span class="state {pnl_cls}">{esc(status_text)}</span>
+    <div style="text-align:right;min-width:96px;">
+      <div style="font-size:22px;font-weight:800;line-height:1.15;color:{_pnl_color};">{pnl_text}</div>
+      <div class="pf-sub">{pnl_label}</div>
+    </div>
   </div>
   <div class="pf-metrics">
     <div class="pf-metric"><div class="k">{t("평균 매수", "Avg buy")}</div><div class="v">{cents(r.get("avg_buy_price", 0))}</div></div>
     <div class="pf-metric"><div class="k">{t("평균 청산", "Avg exit")}</div><div class="v">{cents(exit_price) if closed_shares > 0 else "—"}</div></div>
-    <div class="pf-metric"><div class="k">{pnl_label}</div><div class="v">{pnl_text}</div></div>
     <div class="pf-metric"><div class="k">{t("매수/청산 수량", "Bought/Closed")}</div><div class="v">{r.get("bought_shares", 0):.2f} / {closed_shares:.2f}</div></div>
     <div class="pf-metric"><div class="k">{t("매수금/회수금", "Cost/Recovered")}</div><div class="v">{money(r.get("buy_cost", 0))} / {money(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)))}</div></div>
     <div class="pf-metric"><div class="k">{t("잔여 노출", "Remaining exposure")}</div><div class="v">{rem_shares:.2f} · {money(rem_cost)}</div></div>
@@ -484,36 +487,68 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
 </div>''',
                 unsafe_allow_html=True,
             )
-            if rem_shares > 1e-6:
-                _opts = ["", "won", "lost"]
-                _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
-                _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
-                _pick = st.radio(
-                    t("결과 확정 — 보유분이 이기면 승, 지면 패", "Resolve held shares — Won / Lost"),
-                    _opts, index=_opts.index(_cur) if _cur in _opts else 0,
-                    format_func=lambda x: _lbl[x], horizontal=True,
-                    key=f"resolve_{key_prefix}_{idx}",
+            if open_flag:
+                # 체크하면 그 거래 카드 바로 밑에 손익 계산 박스가 인라인으로 뜬다 (스크롤/하단버튼 불필요).
+                buy_cost = float(r.get("buy_cost", 0) or 0)
+                recovered = float(r.get("adjusted_effective_proceeds", r.get("sell_proceeds", 0)) or 0)
+                _final = res["realized_final"]
+                _final_txt = t("확인 필요", "Verify") if _final is None else signed_money(_final)
+                calc_lines = [
+                    (t("총 매수금", "Buy cost"), f"−{money(buy_cost)}"),
+                    (t("회수금 (매도+정산)", "Recovered"), f"+{money(recovered)}"),
+                ]
+                if res["resolved"] == "won":
+                    calc_lines.append((t("승(상환) — 잔여 $1 상환", "Won — redeemed at $1"),
+                                       f"+{money(rem_shares)} − {money(rem_cost)}"))
+                elif res["resolved"] == "lost":
+                    calc_lines.append((t("패(소멸) — 잔여 원가 소멸", "Lost — cost written off"),
+                                       f"−{money(rem_cost)}"))
+                elif rem_shares > 1e-6:
+                    calc_lines.append((t("잔여 노출 (미확정)", "Remaining (unresolved)"),
+                                       f"{rem_shares:.2f}{t('주','sh')} · {money(rem_cost)}"))
+                _rows_html = "".join(
+                    f'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;">'
+                    f'<span style="color:#6b7280;">{esc(_k)}</span>'
+                    f'<span style="font-variant-numeric:tabular-nums;color:#374151;">{esc(_v)}</span></div>'
+                    for _k, _v in calc_lines
                 )
-                if _pick != _cur:
-                    _rmap = dict(st.session_state.get("trade_resolutions") or {})
-                    if _pick:
-                        _rmap[r.get("key")] = _pick
+                st.markdown(
+                    f'''<div style="margin:2px 0 8px 0;padding:12px 14px;border:1px solid rgba(2,6,23,.08);border-radius:14px;background:rgba(255,255,255,.66);">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.03em;color:#9aa0aa;margin-bottom:6px;">{t("손익 계산", "P&L BREAKDOWN")}</div>
+  {_rows_html}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(2,6,23,.07);">
+    <span style="font-size:13px;font-weight:700;color:#374151;">{t("실현손익", "Realized P&L")}</span>
+    <span style="font-size:20px;font-weight:800;color:{_pnl_color};font-variant-numeric:tabular-nums;">{_final_txt}</span>
+  </div>
+</div>''',
+                    unsafe_allow_html=True,
+                )
+                if rem_shares > 1e-6:
+                    _opts = ["", "won", "lost"]
+                    _lbl = {"": t("자동", "Auto"), "won": t("승(상환)", "Won"), "lost": t("패(소멸)", "Lost")}
+                    _cur = str((st.session_state.get("trade_resolutions") or {}).get(r.get("key"), "") or "")
+                    _pick = st.radio(
+                        t("결과 확정 — 보유분이 이기면 승, 지면 패", "Resolve held shares — Won / Lost"),
+                        _opts, index=_opts.index(_cur) if _cur in _opts else 0,
+                        format_func=lambda x: _lbl[x], horizontal=True,
+                        key=f"resolve_{key_prefix}_{idx}",
+                    )
+                    if _pick != _cur:
+                        _rmap = dict(st.session_state.get("trade_resolutions") or {})
+                        if _pick:
+                            _rmap[r.get("key")] = _pick
+                        else:
+                            _rmap.pop(r.get("key"), None)
+                        st.session_state.trade_resolutions = _rmap
+                        save_local_state()
+                        st.rerun()
+                if st.button(t("이 거래를 거래복기로 보내기", "Send this trade to Review"),
+                             key=f"send_one_{key_prefix}_{idx}", use_container_width=True):
+                    added = add_review_items_from_trade_groups([r], source)
+                    if added:
+                        st.success(t("거래복기에 추가했습니다.", "Added to Trade Review."))
                     else:
-                        _rmap.pop(r.get("key"), None)
-                    st.session_state.trade_resolutions = _rmap
-                    save_local_state()
-                    st.rerun()
-        if send_flag:
-            selected_for_review.append(r)
-
-    if selected_for_review:
-        if st.button(t("선택한 거래를 거래복기로 보내기", "Send selected trades to Trade Review"),
-                     key=f"send_selected_review_{key_prefix}", use_container_width=True):
-            added = add_review_items_from_trade_groups(selected_for_review, source)
-            if added:
-                st.success(t(f"거래복기에 {added}건을 보냈습니다.", f"Sent {added} trade(s) to Trade Review."))
-            else:
-                st.info(t("이미 거래복기에 있는 항목입니다.", "Selected trade(s) already exist in Trade Review."))
+                        st.info(t("이미 거래복기에 있는 항목입니다.", "Already in Trade Review."))
 
 def render_performance_summary(key_prefix="perf"):
     """All-time win/loss + category performance from the durable trade ledger."""
@@ -647,11 +682,6 @@ def today_dashboard_html(metrics):
         f'<div class="v">{money(metrics["stop_loss_used"])} · {metrics["loss_pct"]:.1f}% {loss_label}</div>'
         f'<div class="s">{esc(stop_mode_text)} · {esc(stop_left_text)}</div>'
         f'<div class="today-progress-track"><div class="today-progress-fill loss" style="width:{metrics["stop_progress_bar"]:.1f}%"></div></div>'
-        f'</div>'
-        f'<div class="today-dash-cell">'
-        f'<div class="k">{t("운용 시작 기준", "Operating anchor")}</div>'
-        f'<div class="v">{esc(metrics["anchor_label"])}</div>'
-        f'<div class="s">{esc(anchor_text)}</div>'
         f'</div>'
         f'</div>'
     )
