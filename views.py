@@ -1320,7 +1320,25 @@ def sync_wallet(addr, limit=100, force=False):
     try:
         if force:
             fetch_wallet_activity.clear()
-        raw = fetch_wallet_activity(a, limit=int(limit or 100))
+        # Incremental pagination: page through the DESC feed until we reach trades
+        # we've already stored, so a burst of >limit new trades between syncs is
+        # never missed. Capped for safety. On a forced refresh we keep paging to
+        # backfill any gaps rather than stopping at the first known page.
+        page_limit = int(limit or 100)
+        seen_ids = set(st.session_state.get("imported_tx_ids") or [])
+        raw = []
+        offset = 0
+        for _page in range(20):  # safety cap: up to ~20 pages per sync
+            page = fetch_wallet_activity(a, limit=page_limit, offset=offset)
+            if not isinstance(page, list) or not page:
+                break
+            raw.extend(page)
+            page_tx = {it.get("tx_id") for it in normalize_activity(page) if it.get("tx_id")}
+            if not force and page_tx and page_tx.issubset(seen_ids):
+                break  # reached already-synced territory
+            if len(page) < page_limit:
+                break  # last page of the feed
+            offset += page_limit
         st.session_state.activity_raw = raw
         st.session_state.activity_events = normalize_activity_events(raw)
         items = sort_trades_newest_first(normalize_activity(raw))
