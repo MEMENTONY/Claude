@@ -1896,6 +1896,8 @@ with tab4:
 
     # --- durable local trade ledger: auto-saved every run, survives Polymarket purges ---
     update_trade_ledger()
+    # push to Google Sheets when autosync is on and the ledger changed (fail-soft)
+    _auto_gs = maybe_autosync_ledger()
     _led = st.session_state.get("trade_ledger", {}) or {}
     _led_n = len(_led)
     _led_pnl = sum(_safe_float(v.get("pnl"), 0.0) for v in _led.values()) if _led else 0.0
@@ -1903,6 +1905,12 @@ with tab4:
         f"📒 완료 거래 {_led_n}건이 로컬 장부에 자동 저장돼 있습니다 (누적 손익 {money(_led_pnl)}) — 폴리마켓에서 사라져도 이 장부엔 남습니다.",
         f"{_led_n} completed trades auto-saved to your local ledger (net {money(_led_pnl)}) — kept even if Polymarket drops them."),
         "g" if _led_n else "i"), unsafe_allow_html=True)
+    if isinstance(_auto_gs, dict) and _auto_gs.get("ok") and not _auto_gs.get("skipped"):
+        st.markdown(line(t(f"📤 Google Sheets에 장부 {_auto_gs.get('rows', 0)}건을 자동 전송했습니다.",
+                           f"Auto-synced {_auto_gs.get('rows', 0)} ledger rows to Google Sheets."), "g"), unsafe_allow_html=True)
+    elif isinstance(_auto_gs, dict) and not _auto_gs.get("ok"):
+        st.markdown(line(t(f"Google Sheets 자동 전송 실패 — {_auto_gs.get('error', '')} (설정 · 도구 탭에서 확인)",
+                           f"Google Sheets autosync failed — {_auto_gs.get('error', '')} (see Settings · tools)."), "w"), unsafe_allow_html=True)
     if _led:
         _ldf = pd.DataFrame(sorted(_led.values(), key=lambda x: str(x.get("date", "")), reverse=True))
         _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
@@ -2619,6 +2627,48 @@ with tab_set:
         else:
             st.markdown(line(t("Claude API 연결 성공", "Claude API connection successful"), "g"), unsafe_allow_html=True)
             st.caption(test_text)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ---- Google Sheets ledger sync ----
+    st.markdown(f'<div class="eyebrow">{t("Google Sheets 장부 연동", "Google Sheets ledger sync")}</div>', unsafe_allow_html=True)
+    _gs_email = gsheet_client_email()
+    if not _gs_email:
+        st.markdown(line(t(
+            "서비스 계정 자격증명이 없습니다. Google Cloud에서 서비스 계정을 만들고, JSON 키를 Streamlit Secrets의 [gcp_service_account] 테이블에 붙여넣으세요.",
+            "No service account configured. Create a Google Cloud service account and paste its JSON key into the [gcp_service_account] table in Streamlit Secrets."), "w"), unsafe_allow_html=True)
+    else:
+        st.markdown(line(t(
+            f"서비스 계정 준비됨. 아래 시트를 이 이메일과 '편집자'로 공유하세요: {_gs_email}",
+            f"Service account ready. Share your target Sheet (Editor) with: {_gs_email}"), "g"), unsafe_allow_html=True)
+    st.session_state.gsheet_url = st.text_input(
+        t("Google Sheet 주소 또는 ID", "Google Sheet URL or ID"),
+        value=str(st.session_state.get("gsheet_url", "") or ""),
+        placeholder="https://docs.google.com/spreadsheets/d/....",
+        key="gsheet_url_input",
+    )
+    st.session_state.gsheet_autosync = st.checkbox(
+        t("새 거래로 장부가 바뀌면 자동 전송", "Auto-sync to Sheets when the ledger changes"),
+        value=bool(st.session_state.get("gsheet_autosync", False)),
+        help=t("켜두면 지갑 동기화 등으로 장부가 갱신될 때마다 시트를 자동 업데이트합니다(변경 없으면 건너뜀).",
+               "When on, the Sheet updates every time the ledger changes (skipped when unchanged)."),
+        key="gsheet_autosync_input",
+    )
+    _gs_last = str(st.session_state.get("gsheet_last_sync", "") or "")
+    if _gs_last:
+        st.markdown(f'<div class="footnote">{t(f"마지막 전송: {_gs_last}", f"Last sync: {_gs_last}")}</div>', unsafe_allow_html=True)
+    if st.button(t("지금 Google Sheets로 동기화", "Sync to Google Sheets now"), use_container_width=True, key="gsheet_sync_now_btn"):
+        if not gsheet_ready():
+            st.markdown(line(t("자격증명 또는 라이브러리(gspread)가 없어 전송할 수 없습니다.", "Cannot sync — missing credentials or the gspread library."), "b"), unsafe_allow_html=True)
+        else:
+            with st.spinner(t("Google Sheets로 전송 중", "Syncing to Google Sheets")):
+                _gs_res = push_ledger_to_gsheet(force=True)
+            if _gs_res.get("ok"):
+                st.markdown(line(t(f"전송 완료 — 장부 {_gs_res.get('rows', 0)}건을 시트에 기록했습니다.", f"Synced — wrote {_gs_res.get('rows', 0)} ledger rows to the Sheet."), "g"), unsafe_allow_html=True)
+                save_local_state()
+            else:
+                st.markdown(line(t(f"전송 실패 — {_gs_res.get('error', '')}", f"Sync failed — {_gs_res.get('error', '')}"), "b"), unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin-top:6px;">{t("시트 첫 워크시트가 아닌 \'Memento Ledger\' 탭에 기록되며, 매번 전체를 덮어씁니다. 시트는 서비스 계정과 공유되어야 합니다.", "Writes to a \'Memento Ledger\' worksheet (created if missing), overwriting it each time. The Sheet must be shared with the service account.")}</div>', unsafe_allow_html=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 

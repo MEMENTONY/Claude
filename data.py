@@ -39,6 +39,149 @@ def get_api_key():
             return k
     return None
 
+
+# =====================================================
+# Google Sheets ledger sync (optional — degrades gracefully with no creds)
+# =====================================================
+def _gsheet_creds_info():
+    """Service-account dict from Streamlit secrets, or None. Never logged/echoed.
+    Accepts a TOML table or a JSON string under a few common secret names."""
+    for key in ("gcp_service_account", "google_service_account", "gsheets_service_account", "gsheets"):
+        try:
+            v = st.secrets.get(key, None)
+        except Exception:
+            v = None
+        if not v:
+            continue
+        try:
+            info = dict(v)
+            if info.get("client_email") and info.get("private_key"):
+                return info
+        except Exception:
+            pass
+        try:
+            info = json.loads(str(v))
+            if isinstance(info, dict) and info.get("client_email"):
+                return info
+        except Exception:
+            continue
+    return None
+
+
+def gsheet_client_email():
+    """The service-account email the user must share their Sheet with (or '')."""
+    info = _gsheet_creds_info()
+    return str(info.get("client_email", "") or "") if isinstance(info, dict) else ""
+
+
+def gsheet_ready():
+    """True only if the gspread stack is importable AND a service account is set."""
+    if _gsheet_creds_info() is None:
+        return False
+    try:
+        import gspread  # noqa: F401
+        from google.oauth2.service_account import Credentials  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _extract_sheet_id(url_or_id):
+    s = str(url_or_id or "").strip()
+    if not s:
+        return ""
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", s)
+    return m.group(1) if m else s
+
+
+def get_gsheet_client():
+    """Authorized gspread client from the service account, or (None, error)."""
+    info = _gsheet_creds_info()
+    if not info:
+        return None, "no_creds"
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                  "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+        return gspread.authorize(creds), ""
+    except Exception as e:
+        return None, f"auth_error: {e}"
+
+
+def ledger_export_rows():
+    """(header, rows) for the durable trade ledger, newest first — the same columns
+    as the CSV download so Sheet and CSV stay consistent."""
+    led = st.session_state.get("trade_ledger", {}) or {}
+    header = ["날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "출처", "갱신시각"]
+    rows = []
+    for v in sorted(led.values(), key=lambda x: str(x.get("date", "")), reverse=True):
+        if not isinstance(v, dict):
+            continue
+        pnl = v.get("pnl")
+        rows.append([
+            str(v.get("date", "")), str(v.get("market", "")), str(v.get("outcome", "")),
+            str(v.get("status", "")), str(v.get("resolved", "")),
+            (float(pnl) if isinstance(pnl, (int, float)) else ""),
+            str(v.get("category", "")), str(v.get("source", "")), str(v.get("updated_at", "")),
+        ])
+    return header, rows
+
+
+def _ledger_hash(header, rows):
+    import hashlib
+    payload = json.dumps([header] + rows, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def push_ledger_to_gsheet(force=False):
+    """Write the durable ledger to the configured Google Sheet. Fails soft and skips
+    the network write when nothing changed since the last push (unless force)."""
+    url = str(st.session_state.get("gsheet_url", "") or "").strip()
+    if not url:
+        return {"ok": False, "error": "no_url", "rows": 0, "skipped": False}
+    header, rows = ledger_export_rows()
+    h = _ledger_hash(header, rows)
+    if not force and h == str(st.session_state.get("gsheet_last_hash", "") or ""):
+        return {"ok": True, "error": "", "rows": len(rows), "skipped": True}
+    client, err = get_gsheet_client()
+    if client is None:
+        return {"ok": False, "error": err, "rows": 0, "skipped": False}
+    try:
+        sh = client.open_by_key(_extract_sheet_id(url))
+        ws_name = "Memento Ledger"
+        try:
+            ws = sh.worksheet(ws_name)
+        except Exception:
+            ws = sh.add_worksheet(title=ws_name, rows=max(len(rows) + 10, 20), cols=max(len(header), 10))
+        data = [header] + rows
+        ws.clear()
+        try:
+            ws.update(range_name="A1", values=data)     # gspread >= 6
+        except TypeError:
+            ws.update("A1", data)                        # gspread < 6
+        st.session_state["gsheet_last_hash"] = h
+        st.session_state["gsheet_last_sync"] = datetime.now(KST).isoformat(timespec="minutes")
+        return {"ok": True, "error": "", "rows": len(rows), "skipped": False}
+    except Exception as e:
+        return {"ok": False, "error": f"write_error: {e}", "rows": 0, "skipped": False}
+
+
+def maybe_autosync_ledger():
+    """Called once per run after update_trade_ledger(): push to Sheets when the user
+    enabled autosync and the ledger changed. Never blocks or breaks the app."""
+    try:
+        if not st.session_state.get("gsheet_autosync"):
+            return None
+        if not str(st.session_state.get("gsheet_url", "") or "").strip():
+            return None
+        if not gsheet_ready():
+            return None
+        return push_ledger_to_gsheet(force=False)
+    except Exception:
+        return None
+
 def build_prompt(market_name, outcome="", current_price=0, category="기타", sub="",
                  ai_context="", bookmaker_memo="", fair_price=None, edge=None,
                  market_class="", bookmaker_prob=None, bookmaker_source_memo="",
@@ -1208,6 +1351,12 @@ __all__ = [
     'fetch_wallet_positions',
     'fetch_wallet_value',
     'get_api_key',
+    'gsheet_ready',
+    'gsheet_client_email',
+    'get_gsheet_client',
+    'ledger_export_rows',
+    'push_ledger_to_gsheet',
+    'maybe_autosync_ledger',
     'habit_report',
     'history_summary',
     'is_prop_market',
