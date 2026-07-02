@@ -104,6 +104,8 @@ DEFAULTS = {
     "trade_resolutions": {},
     "gsheet_url": "",
     "gsheet_autobackup": False,
+    "gsheet_webapp_url": "",
+    "gsheet_webapp_token": "",
 }
 
 LOCAL_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memento_state.json")
@@ -126,6 +128,8 @@ PERSIST_KEYS = [
     "trade_resolutions",
     "gsheet_url",
     "gsheet_autobackup",
+    "gsheet_webapp_url",
+    "gsheet_webapp_token",
 ]
 
 GAME_RE = re.compile(r"\b(game|map)\s*[1-5]\b", re.I)
