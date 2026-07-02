@@ -1888,12 +1888,9 @@ with tab4:
         f"{_led_n} completed trades auto-saved to your local ledger (net {money(_led_pnl)}) — kept even if Polymarket drops them."),
         "g" if _led_n else "i"), unsafe_allow_html=True)
     if _led:
-        _ldf = pd.DataFrame(sorted(_led.values(), key=lambda x: str(x.get("date", "")), reverse=True))
-        _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
-                                    "resolved": "결과", "pnl": "손익USD", "category": "카테고리",
-                                    "source": "출처", "updated_at": "갱신시각"})
-        # 내부 계산용 필드(첫/마지막 체결시각 등)는 CSV에서 제외
-        _ldf = _ldf.reindex(columns=["날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "출처", "갱신시각"])
+        # 구글시트 백업과 같은 포맷(키·감정·추격 포함) — 내부 계산용 필드는 제외됨
+        _lbody, _ln = _ledger_rows_for_export()
+        _ldf = pd.DataFrame(_lbody[1:], columns=_lbody[0])
         st.download_button(
             t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
             data=_ldf.to_csv(index=False).encode("utf-8-sig"),
@@ -2637,8 +2634,8 @@ with tab_set:
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # ---- Google Sheets backup ----
-    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업", "Google Sheets backup")}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 한 방향(앱→시트) 백업합니다. 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "One-way backup (app→sheet) of your trade ledger to your own Google Sheet, so records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업 · 양방향", "Google Sheets backup · two-way")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 백업하고(앱→시트, 장부가 바뀔 때마다 자동), 시트에서 고친 카테고리·감정(1-5)·추격(Y)은 다시 앱으로 가져올 수 있습니다(시트→앱). 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "Backs up your trade ledger to your own Google Sheet (app→sheet, automatically whenever the ledger changes), and category/emotion(1-5)/chase(Y) edited in the sheet can be imported back (sheet→app). Records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
 
     _method = gsheet_active_method()
     if _method == "webapp":
@@ -2654,53 +2651,77 @@ with tab_set:
             r"""내 구글 계정·내 시트에 직접 저장하는 가장 쉬운 방법입니다.
 1. 브라우저에 `sheets.new` → 새 스프레드시트 생성(이름 아무거나).
 2. 상단 메뉴 **확장 프로그램 → Apps Script**.
-3. 기본 코드 지우고 아래를 붙여넣고 저장(💾):
+3. 기본 코드 지우고 아래를 붙여넣고 저장(💾) — doPost(백업)와 doGet(가져오기)이 모두 필요합니다:
 ```javascript
-function doPost(e) {
-  var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
+var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
+
+function doPost(e) {  // 앱 → 시트 (백업)
   try {
     var body = JSON.parse(e.postData.contents);
-    if (SECRET && String(body.token || "") !== SECRET)
-      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
     var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
-    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
-  }
+    return _json({ok:true,written:Math.max(rows.length-1,0)});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function doGet(e) {  // 시트 → 앱 (가져오기)
+  try {
+    var p = (e && e.parameter) || {};
+    if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 ```
 4. **배포 → 새 배포 → 유형: 웹 앱**, 실행: **나**, 액세스: **모든 사용자** → 배포 → 구글 로그인 승인.
 5. 나오는 **웹 앱 URL**(.../exec)을 복사해 아래에 붙여넣기.
-* 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.""",
+* 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.
+* 이미 예전 코드(doPost만)로 배포했다면: 코드를 위 내용으로 교체 → **배포 관리 → 수정 → 새 버전** (URL은 그대로 유지됩니다).""",
             r"""The easiest way — writes to your own sheet with your own Google account.
 1. Go to `sheets.new` → create a spreadsheet.
 2. Menu **Extensions → Apps Script**.
-3. Replace the default code with the block below and save:
+3. Replace the default code with the block below and save — both doPost (backup) and doGet (import) are needed:
 ```javascript
-function doPost(e) {
-  var SECRET = "";
+var SECRET = "";  // (optional) same value as 'Shared token' below; empty = no check.
+
+function doPost(e) {  // app → sheet (backup)
   try {
     var body = JSON.parse(e.postData.contents);
-    if (SECRET && String(body.token || "") !== SECRET)
-      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
     var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
-    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
-  }
+    return _json({ok:true,written:Math.max(rows.length-1,0)});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function doGet(e) {  // sheet → app (import)
+  try {
+    var p = (e && e.parameter) || {};
+    if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 ```
 4. **Deploy → New deployment → Web app**, Execute as **Me**, Access **Anyone** → Deploy → authorize.
 5. Copy the **web app URL** (.../exec) and paste it below.
-* To protect it, set SECRET in the code and the 'Shared token' below to the same value."""))
+* To protect it, set SECRET in the code and the 'Shared token' below to the same value.
+* Already deployed the old (doPost-only) code? Replace it with the block above → **Manage deployments → Edit → New version** (URL stays the same)."""))
 
     st.session_state.gsheet_webapp_url = st.text_input(
         t("Apps Script URL", "Apps Script URL"),
@@ -2716,9 +2737,10 @@ function doPost(e) {
     )
 
     st.session_state.gsheet_autobackup = st.checkbox(
-        t("앱 열 때 자동 백업 (세션당 1회)", "Auto-backup on app load (once per session)"),
+        t("자동 백업 (장부가 바뀔 때마다)", "Auto-backup (whenever the ledger changes)"),
         value=bool(st.session_state.get("gsheet_autobackup", False)),
-        help=t("켜두면 새로고침만 해도 최신 거래장부가 시트에 저장됩니다.", "When on, just refreshing keeps the sheet updated."),
+        help=t("켜두면 승/패 확정·감정 태그·새 거래로 장부 내용이 바뀔 때마다 자동으로 시트에 저장됩니다.",
+               "When on, every ledger change (resolutions, emotion tags, new trades) is backed up automatically."),
     )
     _gs_last = str(st.session_state.get("_gsheet_last_backup", "") or "")
     _gs_lastn = int(st.session_state.get("_gsheet_last_count", 0) or 0)
@@ -2738,6 +2760,22 @@ function doPost(e) {
                 "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
             }
             st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+
+    # ---- 시트 → 앱 가져오기 (양방향의 반대 방향) ----
+    st.markdown(f'<div class="footnote" style="margin:10px 0 2px 0;">{t("시트의 ledger 탭에서 카테고리·감정(1-5)·추격(Y) 칸을 고친 뒤 아래 버튼을 누르면 앱에 반영됩니다 (‘키’ 컬럼 기준 매칭 · Apps Script 방식 전용).", "Edit category / emotion(1-5) / chase(Y) cells in the sheet’s ledger tab, then press below to apply them in the app (matched by the ‘키’ key column · Apps Script method only).")}</div>', unsafe_allow_html=True)
+    if st.button(t("시트에서 가져오기 (카테고리·감정 반영)", "Import from sheet (category · emotion)"), width="stretch", key="gsheet_import_btn"):
+        with st.spinner(t("시트 읽는 중", "Reading sheet")):
+            _ri = restore_ledger_from_webapp()
+        if _ri["ok"]:
+            st.success(t(f"가져오기 완료 · 시트 {_ri['rows']}행 확인 · 카테고리 {_ri['categories']}건 · 감정/추격 {_ri['tags']}건 반영",
+                         f"Imported · {_ri['rows']} sheet rows · {_ri['categories']} categories · {_ri['tags']} emotion/chase tags applied"))
+        else:
+            _imap = {
+                "no_url": t("Apps Script URL을 먼저 입력하세요 (가져오기는 웹앱 방식 전용).", "Enter the Apps Script URL first (import is web-app only)."),
+                "empty_sheet": t("시트의 ledger 탭이 비어 있습니다 — 먼저 한 번 백업하세요.", "The ledger tab is empty — back up once first."),
+                "no_key_column": t("시트에 ‘키’ 컬럼이 없습니다 — 새 스크립트(doGet 포함)로 재배포하고 한 번 백업하세요.", "No ‘키’ key column — redeploy the new script (with doGet) and back up once."),
+            }
+            st.markdown(line(_imap.get(_ri["error"], t(f"가져오기 실패 — {_ri['error']}", f"Import failed — {_ri['error']}")), "b"), unsafe_allow_html=True)
 
     with st.expander(t("고급: 서비스 계정 (gspread) 방식", "Advanced: service account (gspread)")):
         _gs = gsheet_status()
@@ -3130,20 +3168,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Optional once-per-session Google Sheets backup. Runs at the very bottom, after the
-# ledger (update_trade_ledger) is refreshed this run. Fully fail-soft: a missing
-# library / secret / sheet / network can NEVER break the app boot.
+# 구글 시트 자동 백업 — 맨 아래(장부 갱신 후)에서, 장부 내용이 마지막 성공 백업과
+# 달라졌을 때마다 실행 (승/패 확정·감정 태그·새 거래 즉시 반영, 세션 첫 로드 포함).
+# 같은 내용으로 실패가 반복되면 내용이 바뀔 때까지 재시도하지 않는다. 전부 fail-soft.
 try:
-    if st.session_state.get("gsheet_autobackup") and not st.session_state.get("_gsheet_autobacked"):
-        st.session_state._gsheet_autobacked = True
-        if gsheet_active_method():
+    if st.session_state.get("gsheet_autobackup") and gsheet_active_method():
+        _gb_sig, _gb_n = ledger_backup_signature()
+        if (_gb_n and _gb_sig
+                and _gb_sig != str(st.session_state.get("_gsheet_backup_sig", ""))
+                and _gb_sig != str(st.session_state.get("_gsheet_backup_fail_sig", ""))):
             _gb = backup_ledger(force=False)
-            if _gb.get("ok") and _gb.get("written"):
+            if _gb.get("ok"):
+                st.session_state._gsheet_backup_sig = _gb_sig
+                st.session_state.pop("_gsheet_backup_fail_sig", None)
                 try:
-                    st.toast(t(f"구글 시트 자동 백업 · {_gb['written']}건 저장",
-                               f"Google Sheets auto-backup · {_gb['written']} rows"))
+                    st.toast(t(f"구글 시트 자동 백업 · {_gb.get('written', _gb_n)}건 저장",
+                               f"Google Sheets auto-backup · {_gb.get('written', _gb_n)} rows"))
                 except Exception:
                     pass
+            else:
+                st.session_state._gsheet_backup_fail_sig = _gb_sig
 except Exception:
     pass
 

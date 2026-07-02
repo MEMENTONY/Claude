@@ -1102,6 +1102,11 @@ def update_trade_ledger():
                 if pnl is None:
                     continue
                 key = str(r.get("key") or f'{r.get("market", "")}|{r.get("outcome", "")}')
+                prev = ledger.get(key) if isinstance(ledger.get(key), dict) else {}
+                cat = infer_market_category("", r.get("market", ""))
+                # 시트 가져오기 등으로 수동 지정된 카테고리는 재생성 때 자동 분류로 덮지 않는다.
+                if str(prev.get("category_src", "")) == "manual" and prev.get("category"):
+                    cat = prev["category"]
                 ledger[key] = {
                     "date": str(r.get("latest_dt") or ""),
                     "market": r.get("market", "") or t("이름 없는 거래", "Unnamed trade"),
@@ -1109,7 +1114,7 @@ def update_trade_ledger():
                     "status": res["status_final"],
                     "resolved": res["resolved"],
                     "pnl": round(_safe_float(pnl, 0.0), 2),
-                    "category": infer_market_category("", r.get("market", "")),
+                    "category": cat,
                     "source": label,
                     # 행동 인사이트 재료: 진입가·매수금(규칙위반 판정)과 첫/마지막 체결시각(추격 감지)
                     "avg_buy_price": _safe_float(r.get("avg_buy_price"), 0.0),
@@ -1118,6 +1123,8 @@ def update_trade_ledger():
                     "latest_ts": _safe_float(r.get("_latest_ts"), -1.0),
                     "updated_at": datetime.now(KST).isoformat(timespec="minutes"),
                 }
+                if str(prev.get("category_src", "")) == "manual" and prev.get("category"):
+                    ledger[key]["category_src"] = "manual"
         st.session_state.trade_ledger = ledger
         return len(ledger)
     except Exception:
