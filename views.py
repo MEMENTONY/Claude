@@ -542,6 +542,40 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                         st.session_state.trade_resolutions = _rmap
                         save_local_state()
                         st.rerun()
+                # --- 감정·행동 태그: '감정적일 때 얼마 잃는지'의 재료 (거래복기 탭 행동 인사이트에 집계) ---
+                _ekey = str(r.get("key") or "")
+                if _ekey:
+                    _emap = st.session_state.get("trade_emotions") or {}
+                    _etag = _emap.get(_ekey) if isinstance(_emap.get(_ekey), dict) else {}
+                    _cur_emo = int(_safe_float((_etag or {}).get("emotion"), 0))
+                    _cur_emo = _cur_emo if 0 <= _cur_emo <= 5 else 0
+                    _cur_chase = bool((_etag or {}).get("chase"))
+                    _emo_lbl = {0: t("기록 없음", "none"), 1: "1 · " + t("침착", "calm"),
+                                2: "2", 3: "3", 4: "4", 5: "5 · " + t("틸트", "tilt")}
+                    ec1, ec2 = st.columns([2.6, 1.4])
+                    with ec1:
+                        _emo = st.radio(
+                            t("진입 당시 감정 (1 침착 ~ 5 틸트/충동)", "Emotion at entry (1 calm – 5 tilt)"),
+                            [0, 1, 2, 3, 4, 5], index=[0, 1, 2, 3, 4, 5].index(_cur_emo),
+                            format_func=lambda x: _emo_lbl[x], horizontal=True,
+                            key=f"emo_{key_prefix}_{idx}",
+                        )
+                    with ec2:
+                        _chase = st.checkbox(
+                            t("추격 진입(손실 만회)", "Chase entry"),
+                            value=_cur_chase, key=f"chase_{key_prefix}_{idx}",
+                            help=t("직전 손실을 만회하려고 들어간 거래면 체크", "Check if this entry was chasing/revenge after a loss"),
+                        )
+                    if int(_emo) != _cur_emo or bool(_chase) != _cur_chase:
+                        _em2 = dict(st.session_state.get("trade_emotions") or {})
+                        if int(_emo) or bool(_chase):
+                            _em2[_ekey] = {"emotion": int(_emo), "chase": bool(_chase),
+                                           "updated_at": datetime.now(KST).isoformat(timespec="minutes")}
+                        else:
+                            _em2.pop(_ekey, None)
+                        st.session_state.trade_emotions = _em2
+                        save_local_state()
+                    st.markdown(f'<div class="footnote" style="margin:2px 0 6px 0;">{t("감정 기록은 거래복기 탭 ‘행동 인사이트’에 집계됩니다.", "Emotion tags feed Behavior insights in the Trade Review tab.")}</div>', unsafe_allow_html=True)
                 if st.button(t("이 거래를 거래복기로 보내기", "Send this trade to Review"),
                              key=f"send_one_{key_prefix}_{idx}", width="stretch"):
                     added = add_review_items_from_trade_groups([r], source)
@@ -577,6 +611,57 @@ def render_performance_summary(key_prefix="perf"):
                       f'<div class="v {tone}">{signed_money(c["pnl"])}</div></div>')
         st.markdown(f'<div class="eyebrow" style="margin-top:10px;">{t("카테고리별", "By category")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="pf-metrics">{cells}</div>', unsafe_allow_html=True)
+
+
+def render_behavior_insights(key_prefix="bi"):
+    """감정·행동 복기 인사이트 — 감정적/규칙위반 거래가 실제로 얼마를 잃게 했는지 숫자로 보여준다."""
+    ins = behavior_insights()
+    st.markdown(f'<div class="eyebrow" style="margin-top:6px;">{t("행동 인사이트 — 감정적일 때 얼마 잃는가", "Behavior insights — what emotion costs you")}</div>', unsafe_allow_html=True)
+    if not ins["n"]:
+        st.markdown(line(t("확정된 거래가 쌓이면 여기서 감정·추격·규칙위반 비용이 집계됩니다. 거래일지의 손익 계산 박스에서 승/패 확정과 감정(1~5)을 기록하세요.",
+                           "Once settled trades accumulate, emotion/chase/rule-violation costs appear here. Mark Won/Lost and tag emotion (1–5) in the Journal P&L box."), "i"), unsafe_allow_html=True)
+        return
+    emo_n, tilt, calm, chase, viol = ins["tagged"], ins["tilt"], ins["calm"], ins["chase"], ins["violation"]
+    corr_note = (t(f"감정↔손익 상관 {ins['corr']:+.2f}", f"emotion↔P&L corr {ins['corr']:+.2f}")
+                 if ins["corr"] is not None else t("3건 이상 기록하면 상관 표시", "corr shows after 3+ tags"))
+    st.markdown(
+        '<div class="stats">'
+        + stat(t("감정적 거래 손익", "Emotional trades P&L"), signed_money(ins["emotional"]["pnl"]),
+               t(f'{ins["emotional"]["n"]}건 · 틸트(4~5)+추격 합집합', f'{ins["emotional"]["n"]} trades · tilt(4–5)+chase'),
+               "pos" if ins["emotional"]["pnl"] >= 0 else "neg")
+        + stat(t("추격 재진입 손익", "Chase re-entry P&L"), signed_money(chase["pnl"]),
+               t(f'{chase["n"]}건 · 자동감지 {chase["detected"]} · 직접표시 {chase["flagged"]}',
+                 f'{chase["n"]} · auto {chase["detected"]} · flagged {chase["flagged"]}'),
+               "pos" if chase["pnl"] >= 0 else "neg")
+        + stat(t("규칙위반 손익", "Rule-violation P&L"), signed_money(viol["pnl"]),
+               t(f'{viol["n"]}건 · 80¢+ 진입/과대베팅', f'{viol["n"]} · 80¢+ entry/oversized'),
+               "pos" if viol["pnl"] >= 0 else "neg")
+        + stat(t("감정 기록", "Emotion tags"), f'{emo_n}/{ins["n"]}', corr_note)
+        + "</div>", unsafe_allow_html=True)
+    if ins["by_emotion"]:
+        _lvl_lbl = {1: t("침착", "calm"), 2: t("안정", "steady"), 3: t("보통", "neutral"), 4: t("불안", "shaky"), 5: t("틸트", "tilt")}
+        cells = ""
+        for lvl, b in ins["by_emotion"].items():
+            tone = "pos" if b["pnl"] >= 0 else "neg"
+            cells += (f'<div class="pf-metric"><div class="k">{lvl} {_lvl_lbl.get(lvl, "")} · {b["n"]}건 · {b["win_rate"]:.0f}%</div>'
+                      f'<div class="v {tone}">{signed_money(b["pnl"])}</div></div>')
+        st.markdown(f'<div class="eyebrow" style="margin-top:10px;">{t("감정점수별 손익", "P&L by emotion score")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="pf-metrics">{cells}</div>', unsafe_allow_html=True)
+        if calm["n"] and tilt["n"]:
+            gap = calm["pnl"] - tilt["pnl"]
+            st.markdown(line(t(
+                f'침착(1~2) {calm["n"]}건 합계 {signed_money(calm["pnl"])} vs 틸트(4~5) {tilt["n"]}건 합계 {signed_money(tilt["pnl"])} — 차이 {money(abs(gap))}',
+                f'Calm (1–2) {calm["n"]} trades {signed_money(calm["pnl"])} vs tilt (4–5) {tilt["n"]} trades {signed_money(tilt["pnl"])} — gap {money(abs(gap))}'),
+                "b" if tilt["pnl"] < 0 else "i"), unsafe_allow_html=True)
+    hp, ov = ins["high_price"], ins["oversized"]
+    if hp["n"] or ov["n"]:
+        _lim_txt = money(ov["limit"]) if ov["limit"] > 0 else t("미설정", "not set")
+        st.markdown(line(t(
+            f'80¢ 이상 진입 {hp["n"]}건 {signed_money(hp["pnl"])} · 과대베팅(감정 한도 {_lim_txt} 초과) {ov["n"]}건 {signed_money(ov["pnl"])}',
+            f'Entries at 80¢+ {hp["n"]} {signed_money(hp["pnl"])} · oversized (> emotional limit {_lim_txt}) {ov["n"]} {signed_money(ov["pnl"])}'),
+            "w" if (hp["pnl"] + ov["pnl"]) < 0 else "i"), unsafe_allow_html=True)
+    _win = int(ins["window_min"])
+    st.markdown(f'<div class="footnote">{t(f"감정·추격 태그는 거래일지 → 손익 계산 박스에서 기록합니다. 추격 자동감지 = 손실 정산 후 {_win}분 내 첫 매수.", f"Tag emotion/chase in Journal → P&L box. Chase auto-detect = first buy within {_win} min after a loss settles.")}</div>', unsafe_allow_html=True)
 
 
 def render_trade_event_cards(events, title=None):
@@ -1311,6 +1396,7 @@ __all__ = [
     'render_ai_report_json',
     'render_entry_result',
     'render_live_price_panel',
+    'render_behavior_insights',
     'render_performance_summary',
     'render_profile_pnl_dashboard',
     'render_trade_date_controls',

@@ -1892,6 +1892,8 @@ with tab4:
         _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
                                     "resolved": "결과", "pnl": "손익USD", "category": "카테고리",
                                     "source": "출처", "updated_at": "갱신시각"})
+        # 내부 계산용 필드(첫/마지막 체결시각 등)는 CSV에서 제외
+        _ldf = _ldf.reindex(columns=["날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "출처", "갱신시각"])
         st.download_button(
             t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
             data=_ldf.to_csv(index=False).encode("utf-8-sig"),
@@ -2062,6 +2064,10 @@ with tab_review:
         f'<div class="subline">{t("거래일지에서 보낸 거래를 기준으로 스스로 진입 근거와 매도 타이밍을 복기합니다.", "Review trades sent from Journal and evaluate your own entry logic and exit timing.")}</div>',
         unsafe_allow_html=True,
     )
+
+    # 감정·행동 복기 인사이트 — 계좌 생존의 핵심 지표라 복기 목록보다 먼저 보여준다.
+    render_behavior_insights()
+    st.markdown("<hr>", unsafe_allow_html=True)
 
     review_items = st.session_state.get("reviews", []) or []
     if not review_items:

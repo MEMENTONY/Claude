@@ -449,12 +449,14 @@ def group_auto_trades_for_pnl(auto_trades):
             "market": title, "outcome": outcome, "token_id": tok,
             "bought_shares": 0.0, "sold_shares": 0.0,
             "buy_cost": 0.0, "sell_proceeds": 0.0, "fills": 0,
-            "latest_dt": None,
+            "latest_dt": None, "first_dt": None,
         })
         g["fills"] += 1
         dt = parse_trade_datetime(tr)
         if dt is not None and (g["latest_dt"] is None or dt > g["latest_dt"]):
             g["latest_dt"] = dt
+        if dt is not None and (g["first_dt"] is None or dt < g["first_dt"]):
+            g["first_dt"] = dt
         if side.startswith("B"):
             g["bought_shares"] += size
             g["buy_cost"] += cash
@@ -480,8 +482,11 @@ def group_auto_trades_for_pnl(auto_trades):
         else:
             status = t("청산 완료", "Closed")
         latest_dt = g.get("latest_dt")
+        first_dt = g.get("first_dt")
         rows.append({
             "key": key, "market": g["market"], "outcome": g["outcome"], "token_id": g["token_id"],
+            "first_dt": first_dt.isoformat(timespec="minutes") if first_dt else "",
+            "_first_ts": first_dt.timestamp() if first_dt else -1,
             "avg_buy_price": round(avg_buy * 100, 2) if avg_buy <= 1 and avg_buy > 0 else round(avg_buy, 2),
             "avg_sell_price": round(avg_sell * 100, 2) if avg_sell <= 1 and avg_sell > 0 else round(avg_sell, 2),
             "bought_shares": round(bs, 2), "sold_shares": round(ss, 2),
@@ -1106,6 +1111,11 @@ def update_trade_ledger():
                     "pnl": round(_safe_float(pnl, 0.0), 2),
                     "category": infer_market_category("", r.get("market", "")),
                     "source": label,
+                    # 행동 인사이트 재료: 진입가·매수금(규칙위반 판정)과 첫/마지막 체결시각(추격 감지)
+                    "avg_buy_price": _safe_float(r.get("avg_buy_price"), 0.0),
+                    "buy_cost": round(_safe_float(r.get("buy_cost"), 0.0), 2),
+                    "first_ts": _safe_float(r.get("_first_ts"), -1.0),
+                    "latest_ts": _safe_float(r.get("_latest_ts"), -1.0),
                     "updated_at": datetime.now(KST).isoformat(timespec="minutes"),
                 }
         st.session_state.trade_ledger = ledger
@@ -1157,6 +1167,124 @@ def performance_summary(ledger=None):
         return {"n": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "total_pnl": 0.0,
                 "gross_win": 0.0, "gross_loss": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
                 "profit_factor": None, "by_category": {}}
+
+def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
+    """감정·행동 복기 인사이트 — '감정적일 때 얼마 잃는지'를 숫자로 만든다.
+    trade_ledger(확정 손익)와 trade_emotions(감정 1 침착~5 틸트 · 추격 플래그)를 그룹 key로 조인해
+    ① 감정점수×손익, ② 손실 정산 직후 재진입(추격, window 분 이내 첫 매수 자동감지 + 수동 플래그),
+    ③ 규칙위반 비용(80¢ 이상 진입 · 감정 한도 초과 과대베팅)을 집계한다. Fails soft."""
+    empty = {"n": 0, "tagged": 0, "by_emotion": {}, "corr": None,
+             "calm": {"n": 0, "pnl": 0.0}, "tilt": {"n": 0, "pnl": 0.0},
+             "chase": {"n": 0, "pnl": 0.0, "wins": 0, "flagged": 0, "detected": 0},
+             "high_price": {"n": 0, "pnl": 0.0, "threshold": 80.0},
+             "oversized": {"n": 0, "pnl": 0.0, "limit": 0.0},
+             "violation": {"n": 0, "pnl": 0.0}, "emotional": {"n": 0, "pnl": 0.0},
+             "window_min": chase_window_min}
+    try:
+        led = ledger if isinstance(ledger, dict) else (st.session_state.get("trade_ledger") or {})
+        emo = emotions if isinstance(emotions, dict) else (st.session_state.get("trade_emotions") or {})
+        uniq = {}
+        for k, v in led.items():
+            if not isinstance(v, dict):
+                continue
+            mk = (str(v.get("market", "")).strip().lower(), str(v.get("outcome", "")).strip().lower())
+            cur = uniq.get(mk)
+            if cur is None or str(v.get("updated_at", "")) >= str(cur[1].get("updated_at", "")):
+                uniq[mk] = (str(k), v)
+        recs = []
+        for k, v in uniq.values():
+            if v.get("pnl") is None:
+                continue
+            tag = emo.get(k)
+            tag = tag if isinstance(tag, dict) else {}
+            e = int(_safe_float(tag.get("emotion"), 0))
+            recs.append({
+                "key": k, "pnl": _safe_float(v.get("pnl"), 0.0),
+                "emotion": e if 1 <= e <= 5 else 0,
+                "chase_flag": bool(tag.get("chase")),
+                "first_ts": _safe_float(v.get("first_ts"), -1.0),
+                "latest_ts": _safe_float(v.get("latest_ts"), -1.0),
+                "avg_buy_price": _safe_float(v.get("avg_buy_price"), -1.0),
+                "buy_cost": _safe_float(v.get("buy_cost"), -1.0),
+            })
+        if not recs:
+            return empty
+        out = json.loads(json.dumps(empty))  # deep copy
+        out["n"] = len(recs)
+        # ① 감정 × 손익
+        by, pts = {}, []
+        for r in recs:
+            e = r["emotion"]
+            if not e:
+                continue
+            b = by.setdefault(e, {"n": 0, "pnl": 0.0, "wins": 0, "losses": 0})
+            b["n"] += 1
+            b["pnl"] += r["pnl"]
+            if r["pnl"] > 0:
+                b["wins"] += 1
+            elif r["pnl"] < 0:
+                b["losses"] += 1
+            pts.append((float(e), r["pnl"]))
+            if e <= 2:
+                out["calm"]["n"] += 1
+                out["calm"]["pnl"] += r["pnl"]
+            elif e >= 4:
+                out["tilt"]["n"] += 1
+                out["tilt"]["pnl"] += r["pnl"]
+        out["by_emotion"] = {lvl: {"n": b["n"], "pnl": round(b["pnl"], 2), "wins": b["wins"], "losses": b["losses"],
+                                   "win_rate": (b["wins"] / b["n"] * 100.0) if b["n"] else 0.0}
+                             for lvl, b in sorted(by.items())}
+        out["tagged"] = len(pts)
+        if len(pts) >= 3:
+            mx = sum(p[0] for p in pts) / len(pts)
+            my = sum(p[1] for p in pts) / len(pts)
+            sx = sum((p[0] - mx) ** 2 for p in pts) ** 0.5
+            sy = sum((p[1] - my) ** 2 for p in pts) ** 0.5
+            if sx > 1e-9 and sy > 1e-9:
+                out["corr"] = round(sum((p[0] - mx) * (p[1] - my) for p in pts) / (sx * sy), 2)
+        # ② 추격 재진입: 손실 거래의 정산시각 후 window분 안에 첫 매수가 있으면 자동감지
+        window = max(_safe_float(chase_window_min, 0.0), 0.0) * 60.0
+        loss_times = [r["latest_ts"] for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
+        for r in recs:
+            detected = r["first_ts"] > 0 and any(0 <= r["first_ts"] - lt <= window for lt in loss_times)
+            r["_chase"] = detected or r["chase_flag"]
+            if r["_chase"]:
+                c = out["chase"]
+                c["n"] += 1
+                c["pnl"] += r["pnl"]
+                if r["pnl"] > 0:
+                    c["wins"] += 1
+                if r["chase_flag"]:
+                    c["flagged"] += 1
+                if detected:
+                    c["detected"] += 1
+        # ③ 규칙 위반: 80¢ 이상 진입 · 감정 한도($) 초과 과대베팅 (합집합 = violation)
+        el = max(_safe_float(profile().get("emotional_limit"), 0.0), 0.0)
+        out["oversized"]["limit"] = el
+        viol = set()
+        for r in recs:
+            if r["avg_buy_price"] >= out["high_price"]["threshold"]:
+                out["high_price"]["n"] += 1
+                out["high_price"]["pnl"] += r["pnl"]
+                viol.add(r["key"])
+            if el > 0 and r["buy_cost"] > el + 1e-9:
+                out["oversized"]["n"] += 1
+                out["oversized"]["pnl"] += r["pnl"]
+                viol.add(r["key"])
+        # 감정적 거래(틸트 4~5 ∪ 추격) / 규칙위반 합집합 합계
+        for r in recs:
+            if r["key"] in viol:
+                out["violation"]["n"] += 1
+                out["violation"]["pnl"] += r["pnl"]
+            if r["emotion"] >= 4 or r["_chase"]:
+                out["emotional"]["n"] += 1
+                out["emotional"]["pnl"] += r["pnl"]
+        for grp in ("calm", "tilt", "chase", "high_price", "oversized", "violation", "emotional"):
+            out[grp]["pnl"] = round(out[grp]["pnl"], 2)
+        return out
+    except Exception:
+        return empty
+
 
 def today_anchor_timestamp():
     """Timestamp for the selected operating anchor, if one has been stored."""
@@ -1437,6 +1565,7 @@ __all__ = [
     'day_is_locked',
     'update_trade_ledger',
     'resolve_trade_row',
+    'behavior_insights',
     'performance_summary',
     'visible_portfolio_positions',
 ]
