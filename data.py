@@ -1,4 +1,5 @@
 # data.py - auto-extracted from streamlit_app.py (behavior-preserving)
+import hashlib
 import json
 import html
 import os
@@ -1175,14 +1176,106 @@ def habit_report(trades):
     return {**sm, "habit_level": level, "habit_title": title, "habit_insights": insights}
 
 # ---------------------------------------------------------------------------
+# 승/패 자동 확정 — 폴리마켓 마켓 결과(gamma-api)로 미확정 보유 거래를 자동 판정.
+# 수동 확정(trade_resolutions 기존 값)은 절대 덮어쓰지 않으며, 전부 fail-soft.
+# ---------------------------------------------------------------------------
+
+def fetch_markets_by_token_ids(token_ids, chunk=15):
+    """gamma-api에서 CLOB 토큰 id들로 마켓 종료/결과를 조회해 {token_id: 판정}으로 돌려준다.
+    판정 verdict: 'won'/'lost'(마켓 종료·가격 확정) 또는 ''(미종료/판정불가).
+    네트워크/파싱 오류가 난 배치는 조용히 건너뛴다(응답에 없는 토큰 = 판정불가)."""
+    out = {}
+    ids = [str(x).strip() for x in (token_ids or []) if str(x).strip()]
+    step = max(int(chunk or 1), 1)
+    for i in range(0, len(ids), step):
+        batch = ids[i:i + step]
+        try:
+            qs = urllib.parse.urlencode({"clob_token_ids": ",".join(batch), "limit": len(batch)})
+            api = f"https://gamma-api.polymarket.com/markets?{qs}"
+            req = urllib.request.Request(api, headers={"User-Agent": "Memento/5.0", "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                payload = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, list):
+            markets = payload
+        elif isinstance(payload, dict):
+            markets = payload.get("markets") if isinstance(payload.get("markets"), list) else []
+        else:
+            markets = []
+        for m in markets:
+            if not isinstance(m, dict):
+                continue
+            toks = [str(x) for x in parse_list(m.get("clobTokenIds"))]
+            prices = parse_list(m.get("outcomePrices"))
+            closed = bool(m.get("closed")) or str(m.get("umaResolutionStatus", "") or "").lower() == "resolved"
+            for pos, tok in enumerate(toks):
+                verdict = ""
+                if closed and pos < len(prices):
+                    p = safe_trade_float(prices[pos], -1.0)
+                    if p >= 0.99:
+                        verdict = "won"
+                    elif 0.0 <= p <= 0.01:
+                        verdict = "lost"
+                out[tok] = {"closed": closed, "verdict": verdict,
+                            "question": str(m.get("question", "") or "")}
+    return out
+
+def auto_resolve_trades():
+    """잔여 보유가 있는 미확정 거래그룹을 폴리마켓 결과로 자동 승/패 확정한다.
+    이미 확정된 key(수동 포함)는 건드리지 않고, 확정되면 장부 갱신 + 저장까지 수행. Fail-soft."""
+    try:
+        res = dict(st.session_state.get("trade_resolutions") or {})
+        candidates = {}
+        for trades in (st.session_state.get("auto_trades") or [], st.session_state.get("paste_trades") or []):
+            if not trades:
+                continue
+            for r in group_auto_trades_for_pnl(trades):
+                key = str(r.get("key") or "")
+                tok = str(r.get("token_id") or "").strip()
+                if not key or key in res:
+                    continue
+                if safe_trade_float(r.get("remaining_shares"), 0.0) <= 1e-6:
+                    continue
+                if not (tok.isdigit() and len(tok) >= 10):
+                    continue  # 실제 CLOB 토큰 id가 있어야 결과 조회 가능 (붙여넣기 거래 등은 수동 확정)
+                candidates[key] = tok
+        if not candidates:
+            return {"ok": True, "checked": 0, "won": 0, "lost": 0, "open": 0, "unknown": 0, "error": ""}
+        verdicts = fetch_markets_by_token_ids(sorted(set(candidates.values())))
+        won = lost = still_open = unknown = 0
+        for key, tok in candidates.items():
+            v = verdicts.get(tok)
+            if not v:
+                unknown += 1
+            elif v["verdict"] == "won":
+                res[key] = "won"
+                won += 1
+            elif v["verdict"] == "lost":
+                res[key] = "lost"
+                lost += 1
+            else:
+                still_open += 1
+        if won or lost:
+            st.session_state.trade_resolutions = res
+            update_trade_ledger()
+            save_local_state()
+        return {"ok": True, "checked": len(candidates), "won": won, "lost": lost,
+                "open": still_open, "unknown": unknown, "error": ""}
+    except Exception as e:
+        return {"ok": False, "checked": 0, "won": 0, "lost": 0, "open": 0, "unknown": 0,
+                "error": f"{type(e).__name__}: {e}"}
+
+# ---------------------------------------------------------------------------
 # Google Sheets backup — mirror the durable trade ledger to a Google Sheet.
 # One-way (app -> sheet), service-account auth via Streamlit Secrets.
 # gspread/google-auth are imported lazily and every entry point is fail-soft, so
 # a missing library / secret / sheet / network can NEVER break the app boot.
 # ---------------------------------------------------------------------------
 GSHEET_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-GSHEET_LEDGER_HEADER = ["날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "출처", "갱신시각"]
-GSHEET_LEDGER_FIELDS = ["date", "market", "outcome", "status", "resolved", "pnl", "category", "source", "updated_at"]
+# '키'는 시트→앱 가져오기의 매칭 기준. 감정(1-5)·추격(Y)은 시트에서 고쳐서 앱으로 되가져올 수 있는 편집 가능 컬럼.
+GSHEET_LEDGER_HEADER = ["키", "날짜", "시장", "선택", "상태", "결과", "손익USD", "카테고리", "감정(1-5)", "추격", "출처", "갱신시각"]
+GSHEET_LEDGER_FIELDS = ["key", "date", "market", "outcome", "status", "resolved", "pnl", "category", "emotion", "chase", "source", "updated_at"]
 
 def _gsheet_service_account_info():
     """Service-account dict from Streamlit Secrets (key: gcp_service_account), or None."""
@@ -1251,37 +1344,51 @@ def backup_ledger_to_gsheet(force=False):
         return {"ok": False, "error": "no_creds", "written": 0}
     if not s["has_url"]:
         return {"ok": False, "error": "no_url", "written": 0}
-    ledger = st.session_state.get("trade_ledger") or {}
-    if not isinstance(ledger, dict):
-        ledger = {}
-    if not ledger and not force:
+    body, n = _ledger_rows_for_export()
+    if n == 0 and not force:
         return {"ok": False, "error": "empty_ledger", "written": 0}
     try:
-        rows = sorted(ledger.values(), key=lambda x: str(x.get("date", "")), reverse=True)
-        body = [GSHEET_LEDGER_HEADER]
-        for rec in rows:
-            if isinstance(rec, dict):
-                body.append([str(rec.get(f, "")) for f in GSHEET_LEDGER_FIELDS])
         ws = _gsheet_open_worksheet()
         ws.clear()
         ws.append_rows(body, value_input_option="RAW")
         st.session_state["_gsheet_last_backup"] = datetime.now(KST).isoformat(timespec="minutes")
-        st.session_state["_gsheet_last_count"] = len(rows)
-        return {"ok": True, "error": "", "written": len(rows)}
+        st.session_state["_gsheet_last_count"] = n
+        return {"ok": True, "error": "", "written": n}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "written": 0}
 
 def _ledger_rows_for_export():
-    """Ledger as a table (header + rows, newest first). Shared by both backup methods."""
+    """장부를 표(헤더+행, 최신순)로 만든다. 두 백업 방식·CSV 다운로드·시트 가져오기가 같은 포맷을 쓴다.
+    '키'는 가져오기 매칭 기준, 감정(1-5)·추격(Y)은 trade_emotions에서 key로 조인해 채운다."""
     ledger = st.session_state.get("trade_ledger") or {}
     if not isinstance(ledger, dict):
         ledger = {}
-    recs = sorted(ledger.values(), key=lambda x: str(x.get("date", "")), reverse=True)
+    emotions = st.session_state.get("trade_emotions") or {}
+    if not isinstance(emotions, dict):
+        emotions = {}
+    items = sorted(((str(k), v) for k, v in ledger.items() if isinstance(v, dict)),
+                   key=lambda kv: str(kv[1].get("date", "")), reverse=True)
     body = [list(GSHEET_LEDGER_HEADER)]
-    for rec in recs:
-        if isinstance(rec, dict):
-            body.append([str(rec.get(f, "")) for f in GSHEET_LEDGER_FIELDS])
-    return body, len(recs)
+    for k, rec in items:
+        tag = emotions.get(k)
+        tag = tag if isinstance(tag, dict) else {}
+        emo = int(_safe_float(tag.get("emotion"), 0))
+        merged = dict(rec)
+        merged["key"] = k
+        merged["emotion"] = emo if 1 <= emo <= 5 else ""
+        merged["chase"] = "Y" if tag.get("chase") else ""
+        body.append([str(merged.get(f, "")) for f in GSHEET_LEDGER_FIELDS])
+    return body, len(items)
+
+def ledger_backup_signature():
+    """백업 내용의 지문(md5)과 행 수. 장부 내용이 실제로 바뀌었을 때만 자동백업을 쏘기 위한 값."""
+    try:
+        body, n = _ledger_rows_for_export()
+        if not n:
+            return "", 0
+        return hashlib.md5(json.dumps(body, ensure_ascii=False).encode("utf-8")).hexdigest(), n
+    except Exception:
+        return "", 0
 
 def backup_ledger_via_webapp(force=False):
     """Push the ledger to the user's own Google Sheet through their Apps Script web app URL
@@ -1317,6 +1424,80 @@ def backup_ledger_via_webapp(force=False):
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "written": 0}
 
+def restore_ledger_from_webapp():
+    """양방향의 '시트→앱' 방향: Apps Script doGet으로 ledger 탭을 되읽어 편집 가능한 컬럼만 반영한다.
+    반영 대상 — 카테고리 → trade_ledger(수동 표시로 보존됨), 감정(1-5)·추격(Y) → trade_emotions.
+    행 매칭은 '키' 컬럼으로만 하고, 시트에서 지운 감정 기록은 앱에서 지우지 않는다(merge-only). Fail-soft."""
+    url = str(st.session_state.get("gsheet_webapp_url", "") or "").strip()
+    if not url:
+        return {"ok": False, "error": "no_url", "rows": 0, "categories": 0, "tags": 0}
+    try:
+        params = {"action": "read"}
+        token = str(st.session_state.get("gsheet_webapp_token", "") or "").strip()
+        if token:
+            params["token"] = token
+        sep = "&" if "?" in url else "?"
+        req = urllib.request.Request(url + sep + urllib.parse.urlencode(params),
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            j = json.loads(resp.read().decode("utf-8", "ignore"))
+        if not (isinstance(j, dict) and j.get("ok")):
+            err = str((j or {}).get("error", "bad response"))[:140] if isinstance(j, dict) else "bad response"
+            return {"ok": False, "error": f"webapp: {err}", "rows": 0, "categories": 0, "tags": 0}
+        rows = j.get("rows") or []
+        if not (isinstance(rows, list) and len(rows) >= 2 and isinstance(rows[0], list)):
+            return {"ok": False, "error": "empty_sheet", "rows": 0, "categories": 0, "tags": 0}
+        header = [str(h).strip() for h in rows[0]]
+
+        def col(name):
+            try:
+                return header.index(name)
+            except ValueError:
+                return -1
+
+        i_key, i_cat, i_emo, i_chase = col("키"), col("카테고리"), col("감정(1-5)"), col("추격")
+        if i_key < 0:
+            return {"ok": False, "error": "no_key_column", "rows": len(rows) - 1, "categories": 0, "tags": 0}
+        ledger = dict(st.session_state.get("trade_ledger") or {})
+        emotions = dict(st.session_state.get("trade_emotions") or {})
+        now_iso = datetime.now(KST).isoformat(timespec="minutes")
+        cat_n = tag_n = 0
+        for raw in rows[1:]:
+            if not isinstance(raw, list):
+                continue
+
+            def cell(i):
+                return str(raw[i]).strip() if 0 <= i < len(raw) else ""
+
+            k = cell(i_key)
+            if not k or k not in ledger or not isinstance(ledger.get(k), dict):
+                continue
+            cat = cell(i_cat)
+            if cat and cat != str(ledger[k].get("category", "")):
+                rec = dict(ledger[k])
+                rec["category"] = cat
+                rec["category_src"] = "manual"  # update_trade_ledger 재생성 때 자동 분류로 덮지 않음
+                rec["updated_at"] = now_iso
+                ledger[k] = rec
+                cat_n += 1
+            emo_raw = cell(i_emo)
+            emo = int(_safe_float(emo_raw, 0)) if emo_raw else 0
+            emo = emo if 1 <= emo <= 5 else 0
+            chase = cell(i_chase).upper() in ("Y", "YES", "1", "TRUE", "O", "예") if i_chase >= 0 else False
+            old = emotions.get(k) if isinstance(emotions.get(k), dict) else {}
+            old_emo = int(_safe_float((old or {}).get("emotion"), 0))
+            old_chase = bool((old or {}).get("chase"))
+            if (emo or chase) and (emo != old_emo or chase != old_chase):
+                emotions[k] = {"emotion": emo, "chase": chase, "updated_at": now_iso}
+                tag_n += 1
+        if cat_n or tag_n:
+            st.session_state.trade_ledger = ledger
+            st.session_state.trade_emotions = emotions
+            save_local_state()
+        return {"ok": True, "error": "", "rows": len(rows) - 1, "categories": cat_n, "tags": tag_n}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "rows": 0, "categories": 0, "tags": 0}
+
 def gsheet_active_method():
     """Which backup method is configured. Apps Script (webapp) is preferred when set."""
     if str(st.session_state.get("gsheet_webapp_url", "") or "").strip():
@@ -1336,6 +1517,10 @@ def backup_ledger(force=False):
 
 __all__ = [
     '_ledger_rows_for_export',
+    'auto_resolve_trades',
+    'fetch_markets_by_token_ids',
+    'ledger_backup_signature',
+    'restore_ledger_from_webapp',
     'backup_ledger',
     'backup_ledger_via_webapp',
     'gsheet_active_method',

@@ -53,9 +53,9 @@ st.markdown(
   --hairline:  #e9eaee;
   --hairline-2:#f0f1f4;
 
-  --accent:      #3b4ef0;   /* deep indigo — the one accent */
-  --accent-press:#2c3ed4;
-  --accent-soft: #eef0fe;
+  --accent:      #2e7cf6;   /* Polymarket blue — the one accent */
+  --accent-press:#1b5fd9;
+  --accent-soft: #eaf2fe;
 
   --green:      #0f7a43;  --green-soft: #e7f5ec;  --green-soft2:#eaf6f0;
   --amber:      #a45e07;  --amber-soft: #fdf3e3;
@@ -125,7 +125,7 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
 }
 .today-panel-dot::after {
   content: ""; position:absolute; inset: 9px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 0 5px rgba(59,78,240,.10);
+  background: var(--accent); box-shadow: 0 0 0 5px rgba(46,124,246,.12);
 }
 .today-goal-kpi {
   margin: 0 0 12px 0;
@@ -332,7 +332,7 @@ h1,h2,h3,h4,p,span,div,label { color: var(--ink); }
 }
 .masthead .name::before {
   content: ""; width: 13px; height: 13px; border-radius: 4px; transform: rotate(45deg);
-  background: linear-gradient(135deg, var(--accent), #6b7bff);
+  background: linear-gradient(135deg, var(--accent), #6fb0ff);
 }
 .masthead .tag { font-size: 12px; color: var(--gray2); margin-top: 4px; }
 .mh-chip {
@@ -564,7 +564,7 @@ div[data-testid="stTextInput"] input:focus,
 div[data-testid="stNumberInput"] input:focus,
 textarea:focus {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 4px rgba(59,78,240,.12) !important;
+  box-shadow: 0 0 0 4px rgba(46,124,246,.14) !important;
 }
 div[data-baseweb="select"] > div {
   background: var(--surface) !important; border: 1px solid var(--hairline) !important;
@@ -1553,7 +1553,7 @@ with st.sidebar:
 
         _limits_set = panel_start_cash > 0 and panel_stop_loss > 0
         with st.expander(t("기준 입력 · 수정", "Edit limits"), expanded=not _limits_set):
-            if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), use_container_width=True, key="sync_today_start_from_portfolio"):
+            if st.button(t("현재 포트폴리오를 시작 기준으로 설정", "Use current portfolio as start"), width="stretch", key="sync_today_start_from_portfolio"):
                 now_label = datetime.now(KST).isoformat(timespec="minutes")
                 st.session_state.today_anchor_mode = "next"
                 st.session_state.today_anchor_key = ""
@@ -1629,7 +1629,7 @@ with st.sidebar:
 
             ac1, ac2 = st.columns(2)
             with ac1:
-                if st.button(t("다음 거래부터", "From next trade"), use_container_width=True, key="set_anchor_next_trade"):
+                if st.button(t("다음 거래부터", "From next trade"), width="stretch", key="set_anchor_next_trade"):
                     now_label = datetime.now(KST).isoformat(timespec="minutes")
                     st.session_state.today_anchor_mode = "next"
                     st.session_state.today_anchor_key = ""
@@ -1641,7 +1641,7 @@ with st.sidebar:
                     st.rerun()
             with ac2:
                 selected_row = anchor_by_key.get(selected_anchor)
-                if st.button(t("선택 거래부터", "From selected"), use_container_width=True,
+                if st.button(t("선택 거래부터", "From selected"), width="stretch",
                              disabled=selected_row is None, key="set_anchor_selected_trade"):
                     all_completed = recent_completed_trade_rows(limit=None)
                     anchor_ts = _safe_float(selected_row.get("_latest_ts"), -1.0)
@@ -1675,12 +1675,12 @@ with st.sidebar:
         side_limit = max(int(st.session_state.get("side_panel_trade_limit", 5) or 5), 5)
         if side_completed_total > side_limit:
             if st.button(t("최근 거래 5개 더 보기", "Show 5 more trades"),
-                         use_container_width=True, key="load_more_side_completed_trades"):
+                         width="stretch", key="load_more_side_completed_trades"):
                 st.session_state.side_panel_trade_limit = side_limit + 5
                 st.rerun()
         elif side_limit > 5:
             if st.button(t("최근 거래 5개만 보기", "Show only 5 trades"),
-                         use_container_width=True, key="reset_side_completed_trades"):
+                         width="stretch", key="reset_side_completed_trades"):
                 st.session_state.side_panel_trade_limit = 5
                 st.rerun()
 
@@ -1753,7 +1753,7 @@ with tab1:
             _msg, _kind = "", ""
         _lk1, _lk2 = st.columns([1, 4])
         with _lk1:
-            if st.button(t("🔒 오늘 그만", "🔒 Lock today"), key="entry_lock_btn", use_container_width=True):
+            if st.button(t("🔒 오늘 그만", "🔒 Lock today"), key="entry_lock_btn", width="stretch"):
                 st.session_state.day_locked_date = datetime.now(KST).date().isoformat()
                 save_local_state()
                 st.rerun()
@@ -1771,7 +1771,7 @@ with tab1:
             placeholder="https://polymarket.com/...",
         )
     with u2:
-        load_market = st.button(t("시장 불러오기", "Load market"), use_container_width=True, key="entry_load_market")
+        load_market = st.button(t("시장 불러오기", "Load market"), width="stretch", key="entry_load_market")
 
     if load_market:
         st.session_state.entry_url = entry_url_value
@@ -1849,7 +1849,7 @@ with tab3:
     manual = st.checkbox(t("보유 수량 직접 입력", "Enter shares manually"))
     shares_ps = st.number_input(t("보유 수량", "Shares"), 0.0, value=100.0, key="psh") if manual else (inv / (buy_price / 100) if buy_price > 0 else 0)
 
-    if st.button(t("계산하기", "Calculate"), use_container_width=True):
+    if st.button(t("계산하기", "Calculate"), width="stretch"):
         rows, need = partial_rows(shares_ps, cur_price, inv)
         cur_val = shares_ps * (cur_price / 100)
         add = shares_ps - cur_val
@@ -1865,7 +1865,7 @@ with tab3:
                 st.markdown(line(t(f"원금 회수 최소 매도 비율: <b>{need:.1f}%</b>", f"Min sell ratio: <b>{need:.1f}%</b>"), "g"), unsafe_allow_html=True)
             else:
                 st.markdown(line(t(f"100% 팔아도 원금 회수 불가 (필요 {need:.1f}%).", f"Even 100% can't recover cost ({need:.1f}% needed)."), "w"), unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 # =====================================================
@@ -1888,15 +1888,14 @@ with tab4:
         f"{_led_n} completed trades auto-saved to your local ledger (net {money(_led_pnl)}) — kept even if Polymarket drops them."),
         "g" if _led_n else "i"), unsafe_allow_html=True)
     if _led:
-        _ldf = pd.DataFrame(sorted(_led.values(), key=lambda x: str(x.get("date", "")), reverse=True))
-        _ldf = _ldf.rename(columns={"date": "날짜", "market": "시장", "outcome": "선택", "status": "상태",
-                                    "resolved": "결과", "pnl": "손익USD", "category": "카테고리",
-                                    "source": "출처", "updated_at": "갱신시각"})
+        # 구글시트 백업과 같은 포맷(키·감정·추격 포함) — 내부 계산용 필드는 제외됨
+        _lbody, _ln = _ledger_rows_for_export()
+        _ldf = pd.DataFrame(_lbody[1:], columns=_lbody[0])
         st.download_button(
             t("📒 거래장부 전체 다운로드 (CSV)", "📒 Download full trade ledger (CSV)"),
             data=_ldf.to_csv(index=False).encode("utf-8-sig"),
             file_name="memento_trade_ledger.csv", mime="text/csv",
-            use_container_width=True, key="ledger_download_btn")
+            width="stretch", key="ledger_download_btn")
     render_performance_summary()
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -1931,7 +1930,7 @@ with tab4:
         with ac2:
             act_limit = st.number_input(t("불러올 개수", "Limit"), 10, 300, 100, step=10, key="activity_import_limit")
 
-        if st.button(t("거래내역 불러오기 (강제 새로고침)", "Import trades (force refresh)"), use_container_width=True, key="activity_import_btn"):
+        if st.button(t("거래내역 불러오기 (강제 새로고침)", "Import trades (force refresh)"), width="stretch", key="activity_import_btn"):
             with st.spinner(t("거래내역 불러오는 중", "Fetching activity")):
                 _res = sync_wallet(st.session_state.wallet_addr, limit=act_limit, force=True)
             if _res["error"] == "bad_address":
@@ -1940,6 +1939,30 @@ with tab4:
                 st.markdown(line(t(f"거래내역 불러오기 실패 — {_res['error']}", f"Activity import failed — {_res['error']}"), "b"), unsafe_allow_html=True)
             else:
                 st.markdown(line(t(f"거래내역 {_res['found']}건 확인 · 새로 추가 {_res['added']}건 (장부에 저장됨)", f"Found {_res['found']} trades · added {_res['added']} (saved to ledger)"), "g"), unsafe_allow_html=True)
+
+        # --- 승/패 자동 확정: 폴리마켓 결과를 조회해 잔여 보유 미확정 거래를 자동 판정 ---
+        _arm = str(st.session_state.pop("_auto_resolve_msg", "") or "")
+        if _arm:
+            st.markdown(line(_arm, "g"), unsafe_allow_html=True)
+        if st.button(t("승/패 자동 확정 (폴리마켓 결과 조회)", "Auto-resolve Won/Lost (fetch market results)"),
+                     width="stretch", key="auto_resolve_btn",
+                     help=t("잔여 보유가 있는 미확정 거래의 마켓이 종료됐으면 자동으로 승/패를 확정합니다. 수동 확정은 덮어쓰지 않습니다.",
+                            "If a market with unresolved held shares has closed, marks it Won/Lost automatically. Never overrides manual marks.")):
+            with st.spinner(t("폴리마켓 결과 확인 중", "Checking Polymarket results")):
+                _ar = auto_resolve_trades()
+            if not _ar["ok"]:
+                st.markdown(line(t(f"자동 확정 실패 — {_ar['error']}", f"Auto-resolve failed — {_ar['error']}"), "b"), unsafe_allow_html=True)
+            elif _ar["won"] or _ar["lost"]:
+                st.session_state._auto_resolve_msg = t(
+                    f"자동 확정 완료 · 승 {_ar['won']} · 패 {_ar['lost']} · 미종료 {_ar['open']}건 · 판정불가 {_ar['unknown']}건",
+                    f"Auto-resolved · won {_ar['won']} · lost {_ar['lost']} · open {_ar['open']} · unknown {_ar['unknown']}")
+                st.rerun()
+            elif _ar["checked"] == 0:
+                st.markdown(line(t("자동 확정 대상이 없습니다 — 잔여 보유가 있는 미확정 거래가 없어요.",
+                                   "Nothing to auto-resolve — no unresolved trades with held shares."), "i"), unsafe_allow_html=True)
+            else:
+                st.markdown(line(t(f"아직 종료된 마켓이 없습니다 · 검사 {_ar['checked']}건 (미종료 {_ar['open']} · 판정불가 {_ar['unknown']})",
+                                   f"No closed markets yet · checked {_ar['checked']} (open {_ar['open']} · unknown {_ar['unknown']})"), "i"), unsafe_allow_html=True)
 
         st.markdown("<hr>", unsafe_allow_html=True)
         if st.session_state.auto_trades:
@@ -1964,9 +1987,9 @@ with tab4:
             cdl, crs = st.columns(2)
             with cdl:
                 csv_auto = pd.DataFrame(filtered_trades).to_csv(index=False).encode("utf-8-sig") if filtered_trades else b""
-                st.download_button(t("선택 기간 CSV", "Download selected range CSV"), data=csv_auto, file_name="memento_auto_trades_filtered.csv", mime="text/csv", use_container_width=True)
+                st.download_button(t("선택 기간 CSV", "Download selected range CSV"), data=csv_auto, file_name="memento_auto_trades_filtered.csv", mime="text/csv", width="stretch")
             with crs:
-                if st.button(t("자동 거래내역 전체 비우기", "Clear all auto trades"), use_container_width=True, key="clear_auto_trades_btn"):
+                if st.button(t("자동 거래내역 전체 비우기", "Clear all auto trades"), width="stretch", key="clear_auto_trades_btn"):
                     st.session_state.auto_trades = []
                     st.session_state.imported_tx_ids = []
                     st.rerun()
@@ -1997,9 +2020,9 @@ with tab4:
 
         pc1, pc2 = st.columns(2)
         with pc1:
-            parse_now = st.button(t("붙여넣기 정리", "Organize pasted activity"), use_container_width=True, key="parse_paste_activity_btn")
+            parse_now = st.button(t("붙여넣기 정리", "Organize pasted activity"), width="stretch", key="parse_paste_activity_btn")
         with pc2:
-            clear_paste = st.button(t("붙여넣기 결과 비우기", "Clear pasted result"), use_container_width=True, key="clear_paste_activity_btn")
+            clear_paste = st.button(t("붙여넣기 결과 비우기", "Clear pasted result"), width="stretch", key="clear_paste_activity_btn")
 
         if clear_paste:
             st.session_state.paste_trades = []
@@ -2063,6 +2086,10 @@ with tab_review:
         unsafe_allow_html=True,
     )
 
+    # 감정·행동 복기 인사이트 — 계좌 생존의 핵심 지표라 복기 목록보다 먼저 보여준다.
+    render_behavior_insights()
+    st.markdown("<hr>", unsafe_allow_html=True)
+
     review_items = st.session_state.get("reviews", []) or []
     if not review_items:
         st.markdown(
@@ -2095,7 +2122,8 @@ with tab_review:
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(item.get("market"))}</div>
-      <div class="pf-sub">{esc(item.get("outcome"))} · {esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
+      <div class="pf-pills">{outcome_pill(item.get("outcome"))}{cents_pill(safe_trade_float(item.get("avg_buy_price"), 0))}</div>
+      <div class="pf-sub">{esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
     </div>
     <span class="state i">{esc(item.get("latest_dt") or item.get("created_at", ""))}</span>
   </div>
@@ -2156,7 +2184,7 @@ with tab_review:
 
                 b1, b2 = st.columns(2)
                 with b1:
-                    if st.button(t("복기 저장", "Save review"), key=f"{kbase}_save", use_container_width=True):
+                    if st.button(t("복기 저장", "Save review"), key=f"{kbase}_save", width="stretch"):
                         st.session_state.review_notes[rid] = {
                             "selected_fields": fields,
                             "values": values,
@@ -2164,7 +2192,7 @@ with tab_review:
                         }
                         st.success(t("복기를 저장했습니다.", "Review saved."))
                 with b2:
-                    if st.button(t("복기에서 제거", "Remove from review"), key=f"{kbase}_remove", use_container_width=True):
+                    if st.button(t("복기에서 제거", "Remove from review"), key=f"{kbase}_remove", width="stretch"):
                         st.session_state.reviews = [x for x in st.session_state.get("reviews", []) if not isinstance(x, dict) or x.get("review_id") != rid]
                         if isinstance(st.session_state.get("review_notes"), dict):
                             st.session_state.review_notes.pop(rid, None)
@@ -2271,8 +2299,8 @@ with tab_ai:
     subj_id = subj["token_id"] or f'{subj["market"]}|{subj["outcome"]}'
     mkey = f"{subj_id}|{mode}|{ai_memo.strip()}|{bk_memo.strip()}|{subj['fair_price']}|{subj['edge']}|{subj['resolution'][:60]}"
     c1, c2 = st.columns([1, 1])
-    gen = c1.button(t("AI 리포트 생성", "Generate report"), use_container_width=True, key="ai_generate_report", disabled=not subj["market"])
-    force = c2.button(t("새로 생성", "Force refresh"), use_container_width=True, key="ai_force_report", disabled=not subj["market"])
+    gen = c1.button(t("AI 리포트 생성", "Generate report"), width="stretch", key="ai_generate_report", disabled=not subj["market"])
+    force = c2.button(t("새로 생성", "Force refresh"), width="stretch", key="ai_force_report", disabled=not subj["market"])
 
     if (gen or force) and subj["market"]:
         st.session_state._ai_memo_cache = ai_memo
@@ -2318,7 +2346,7 @@ with tab_pf:
     with st.expander(t("폴리마켓 지갑으로 포지션 불러오기", "Import positions from a Polymarket wallet")):
         st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("폴리마켓 프로필 주소(0x로 시작)를 붙여넣으면 공개 데이터 API로 현재 보유 포지션을 읽어옵니다. 로그인·서명 없이 조회만 합니다.", "Paste your Polymarket wallet address. We read open positions via the public data API — read-only, no login or signing.")}</div>', unsafe_allow_html=True)
         st.session_state.wallet_addr = st.text_input(t("지갑 주소", "Wallet address"), value=st.session_state.wallet_addr, placeholder="0x...", key="portfolio_wallet_addr")
-        if st.button(t("보유 포지션 불러오기", "Import open positions"), use_container_width=True):
+        if st.button(t("보유 포지션 불러오기", "Import open positions"), width="stretch"):
             a = st.session_state.wallet_addr.strip()
             if not (a.startswith("0x") and len(a) == 42):
                 st.markdown(line(t("주소 형식 오류 — 0x로 시작하는 42자 주소인지 확인하세요.", "Bad address — must be 42 chars starting with 0x."), "b"), unsafe_allow_html=True)
@@ -2487,7 +2515,7 @@ with tab_pf:
                 "cur": st.column_config.NumberColumn(t("현재가 (¢)", "Now (¢)"), format="%.1f"),
                 "asset": st.column_config.TextColumn(t("토큰/자산 ID", "Token/asset ID")),
             }
-            edited = st.data_editor(df, column_config=col_cfg, use_container_width=True,
+            edited = st.data_editor(df, column_config=col_cfg, width="stretch",
                                     hide_index=True, num_rows="dynamic", key="pf_editor")
             st.session_state.portfolio = edited.to_dict("records")
 
@@ -2515,7 +2543,7 @@ with tab_pf:
             with a3:
                 np_shares = st.number_input(t("보유 수량", "Shares"), 0.0, value=0.0)
                 np_inv = st.number_input(t("투자금 ($)", "Cost ($)"), 0.0, value=0.0)
-            add_pos = st.form_submit_button(t("포지션 추가", "Add position"), use_container_width=True)
+            add_pos = st.form_submit_button(t("포지션 추가", "Add position"), width="stretch")
 
         if add_pos:
             if not np_name.strip():
@@ -2596,7 +2624,7 @@ with tab_set:
     # ---- Claude API test ----
     st.markdown(f'<div class="eyebrow">{t("Claude API 상태", "Claude API status")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("API 키는 코드에 직접 넣지 말고 Streamlit Secrets의 ANTHROPIC_API_KEY에 저장하세요.", "Do not hard-code keys. Save it as ANTHROPIC_API_KEY in Streamlit Secrets.")}</div>', unsafe_allow_html=True)
-    if st.button(t("Claude API 연결 테스트", "Test Claude API"), use_container_width=True):
+    if st.button(t("Claude API 연결 테스트", "Test Claude API"), width="stretch"):
         test_text, test_err = call_claude(t("한 문장으로 '연결 성공'이라고 답해.", "Reply with one sentence: connection successful."))
         if test_err:
             st.markdown(line(t(f"Claude API 실패 — {test_err}", f"Claude API failed — {test_err}"), "b"), unsafe_allow_html=True)
@@ -2607,8 +2635,8 @@ with tab_set:
     st.markdown("<hr>", unsafe_allow_html=True)
 
     # ---- Google Sheets backup ----
-    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업", "Google Sheets backup")}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 한 방향(앱→시트) 백업합니다. 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "One-way backup (app→sheet) of your trade ledger to your own Google Sheet, so records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="eyebrow">{t("구글 시트 백업 · 양방향", "Google Sheets backup · two-way")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 백업하고(앱→시트, 장부가 바뀔 때마다 자동), 시트에서 고친 카테고리·감정(1-5)·추격(Y)은 다시 앱으로 가져올 수 있습니다(시트→앱). 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "Backs up your trade ledger to your own Google Sheet (app→sheet, automatically whenever the ledger changes), and category/emotion(1-5)/chase(Y) edited in the sheet can be imported back (sheet→app). Records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
 
     _method = gsheet_active_method()
     if _method == "webapp":
@@ -2624,53 +2652,77 @@ with tab_set:
             r"""내 구글 계정·내 시트에 직접 저장하는 가장 쉬운 방법입니다.
 1. 브라우저에 `sheets.new` → 새 스프레드시트 생성(이름 아무거나).
 2. 상단 메뉴 **확장 프로그램 → Apps Script**.
-3. 기본 코드 지우고 아래를 붙여넣고 저장(💾):
+3. 기본 코드 지우고 아래를 붙여넣고 저장(💾) — doPost(백업)와 doGet(가져오기)이 모두 필요합니다:
 ```javascript
-function doPost(e) {
-  var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
+var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
+
+function doPost(e) {  // 앱 → 시트 (백업)
   try {
     var body = JSON.parse(e.postData.contents);
-    if (SECRET && String(body.token || "") !== SECRET)
-      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
     var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
-    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
-  }
+    return _json({ok:true,written:Math.max(rows.length-1,0)});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function doGet(e) {  // 시트 → 앱 (가져오기)
+  try {
+    var p = (e && e.parameter) || {};
+    if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 ```
 4. **배포 → 새 배포 → 유형: 웹 앱**, 실행: **나**, 액세스: **모든 사용자** → 배포 → 구글 로그인 승인.
 5. 나오는 **웹 앱 URL**(.../exec)을 복사해 아래에 붙여넣기.
-* 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.""",
+* 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.
+* 이미 예전 코드(doPost만)로 배포했다면: 코드를 위 내용으로 교체 → **배포 관리 → 수정 → 새 버전** (URL은 그대로 유지됩니다).""",
             r"""The easiest way — writes to your own sheet with your own Google account.
 1. Go to `sheets.new` → create a spreadsheet.
 2. Menu **Extensions → Apps Script**.
-3. Replace the default code with the block below and save:
+3. Replace the default code with the block below and save — both doPost (backup) and doGet (import) are needed:
 ```javascript
-function doPost(e) {
-  var SECRET = "";
+var SECRET = "";  // (optional) same value as 'Shared token' below; empty = no check.
+
+function doPost(e) {  // app → sheet (backup)
   try {
     var body = JSON.parse(e.postData.contents);
-    if (SECRET && String(body.token || "") !== SECRET)
-      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    if (SECRET && String(body.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
     var rows = body.rows || [];
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
     sh.clearContents();
     if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
-    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
-  }
+    return _json({ok:true,written:Math.max(rows.length-1,0)});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function doGet(e) {  // sheet → app (import)
+  try {
+    var p = (e && e.parameter) || {};
+    if (SECRET && String(p.token || "") !== SECRET) return _json({ok:false,error:"bad token"});
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("ledger");
+    return _json({ok:true, rows: sh ? sh.getDataRange().getDisplayValues() : []});
+  } catch (err) { return _json({ok:false,error:String(err)}); }
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 ```
 4. **Deploy → New deployment → Web app**, Execute as **Me**, Access **Anyone** → Deploy → authorize.
 5. Copy the **web app URL** (.../exec) and paste it below.
-* To protect it, set SECRET in the code and the 'Shared token' below to the same value."""))
+* To protect it, set SECRET in the code and the 'Shared token' below to the same value.
+* Already deployed the old (doPost-only) code? Replace it with the block above → **Manage deployments → Edit → New version** (URL stays the same)."""))
 
     st.session_state.gsheet_webapp_url = st.text_input(
         t("Apps Script URL", "Apps Script URL"),
@@ -2686,16 +2738,17 @@ function doPost(e) {
     )
 
     st.session_state.gsheet_autobackup = st.checkbox(
-        t("앱 열 때 자동 백업 (세션당 1회)", "Auto-backup on app load (once per session)"),
+        t("자동 백업 (장부가 바뀔 때마다)", "Auto-backup (whenever the ledger changes)"),
         value=bool(st.session_state.get("gsheet_autobackup", False)),
-        help=t("켜두면 새로고침만 해도 최신 거래장부가 시트에 저장됩니다.", "When on, just refreshing keeps the sheet updated."),
+        help=t("켜두면 승/패 확정·감정 태그·새 거래로 장부 내용이 바뀔 때마다 자동으로 시트에 저장됩니다.",
+               "When on, every ledger change (resolutions, emotion tags, new trades) is backed up automatically."),
     )
     _gs_last = str(st.session_state.get("_gsheet_last_backup", "") or "")
     _gs_lastn = int(st.session_state.get("_gsheet_last_count", 0) or 0)
     if _gs_last:
         st.markdown(f'<div class="footnote">{t(f"마지막 백업: {_gs_last} · {_gs_lastn}건", f"Last backup: {_gs_last} · {_gs_lastn} rows")}</div>', unsafe_allow_html=True)
 
-    if st.button(t("지금 구글 시트로 백업", "Back up to Google Sheets now"), use_container_width=True, key="gsheet_backup_now"):
+    if st.button(t("지금 구글 시트로 백업", "Back up to Google Sheets now"), width="stretch", key="gsheet_backup_now"):
         _b = backup_ledger(force=True)
         if _b["ok"]:
             st.success(t(f"백업 완료 · {_b['written']}건을 시트에 저장했습니다.", f"Backed up · {_b['written']} rows written."))
@@ -2708,6 +2761,22 @@ function doPost(e) {
                 "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
             }
             st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+
+    # ---- 시트 → 앱 가져오기 (양방향의 반대 방향) ----
+    st.markdown(f'<div class="footnote" style="margin:10px 0 2px 0;">{t("시트의 ledger 탭에서 카테고리·감정(1-5)·추격(Y) 칸을 고친 뒤 아래 버튼을 누르면 앱에 반영됩니다 (‘키’ 컬럼 기준 매칭 · Apps Script 방식 전용).", "Edit category / emotion(1-5) / chase(Y) cells in the sheet’s ledger tab, then press below to apply them in the app (matched by the ‘키’ key column · Apps Script method only).")}</div>', unsafe_allow_html=True)
+    if st.button(t("시트에서 가져오기 (카테고리·감정 반영)", "Import from sheet (category · emotion)"), width="stretch", key="gsheet_import_btn"):
+        with st.spinner(t("시트 읽는 중", "Reading sheet")):
+            _ri = restore_ledger_from_webapp()
+        if _ri["ok"]:
+            st.success(t(f"가져오기 완료 · 시트 {_ri['rows']}행 확인 · 카테고리 {_ri['categories']}건 · 감정/추격 {_ri['tags']}건 반영",
+                         f"Imported · {_ri['rows']} sheet rows · {_ri['categories']} categories · {_ri['tags']} emotion/chase tags applied"))
+        else:
+            _imap = {
+                "no_url": t("Apps Script URL을 먼저 입력하세요 (가져오기는 웹앱 방식 전용).", "Enter the Apps Script URL first (import is web-app only)."),
+                "empty_sheet": t("시트의 ledger 탭이 비어 있습니다 — 먼저 한 번 백업하세요.", "The ledger tab is empty — back up once first."),
+                "no_key_column": t("시트에 ‘키’ 컬럼이 없습니다 — 새 스크립트(doGet 포함)로 재배포하고 한 번 백업하세요.", "No ‘키’ key column — redeploy the new script (with doGet) and back up once."),
+            }
+            st.markdown(line(_imap.get(_ri["error"], t(f"가져오기 실패 — {_ri['error']}", f"Import failed — {_ri['error']}")), "b"), unsafe_allow_html=True)
 
     with st.expander(t("고급: 서비스 계정 (gspread) 방식", "Advanced: service account (gspread)")):
         _gs = gsheet_status()
@@ -2758,7 +2827,7 @@ function doPost(e) {
         with s2:
             pf_max = st.slider(t("적정 배팅 비율 (%)", "Comfort bet ratio (%)"), 1, 30, int(prof["max_pct"]))
             pf_block = st.slider(t("진입 금지선 (%)", "No-entry line (%)"), 5, 40, int(prof["block_pct"]))
-        save_prof = st.form_submit_button(t("저장", "Save"), use_container_width=True)
+        save_prof = st.form_submit_button(t("저장", "Save"), width="stretch")
 
     if save_prof:
         p = dict(prof)
@@ -2768,7 +2837,7 @@ function doPost(e) {
         st.toast(t("저장했습니다", "Saved"))
         st.rerun()
 
-    if st.button(t("리스크 기준 기본값으로 초기화", "Reset risk defaults"), use_container_width=True):
+    if st.button(t("리스크 기준 기본값으로 초기화", "Reset risk defaults"), width="stretch"):
         st.session_state.profile = dict(DEFAULT_PROFILE)
         st.rerun()
 
@@ -2781,7 +2850,7 @@ function doPost(e) {
     # ---- URL helper ----
     st.markdown(f'<div class="eyebrow">{t("Polymarket URL 도우미", "Polymarket URL helper")}</div>', unsafe_allow_html=True)
     url = st.text_input("Polymarket URL", "https://polymarket.com/event/")
-    if st.button(t("시장 정보 불러오기", "Fetch market info"), use_container_width=True):
+    if st.button(t("시장 정보 불러오기", "Fetch market info"), width="stretch"):
         slug = extract_slug(url)
         if not slug:
             st.markdown(line(t("URL에서 slug를 찾지 못했습니다.", "Couldn't find a slug."), "b"), unsafe_allow_html=True)
@@ -2796,7 +2865,7 @@ function doPost(e) {
             except Exception as e:
                 st.markdown(line(t(f"불러오기 실패 — {e}", f"Fetch failed — {e}"), "b"), unsafe_allow_html=True)
     if st.session_state.url_rows:
-        st.dataframe(pd.DataFrame(st.session_state.url_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(st.session_state.url_rows), width="stretch", hide_index=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -2849,7 +2918,7 @@ function doPost(e) {
                   "self_check_scale": st.session_state.get("self_check_scale", 5)}
         st.download_button(t("백업 내려받기 (JSON)", "Download backup (JSON)"),
                            data=json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8"),
-                           file_name="memento_backup.json", mime="application/json", use_container_width=True)
+                           file_name="memento_backup.json", mime="application/json", width="stretch")
     with bc2:
         up = st.file_uploader(t("백업 불러오기", "Restore backup"), type=["json"], label_visibility="collapsed")
         if up is not None:
@@ -3100,20 +3169,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Optional once-per-session Google Sheets backup. Runs at the very bottom, after the
-# ledger (update_trade_ledger) is refreshed this run. Fully fail-soft: a missing
-# library / secret / sheet / network can NEVER break the app boot.
+# 구글 시트 자동 백업 — 맨 아래(장부 갱신 후)에서, 장부 내용이 마지막 성공 백업과
+# 달라졌을 때마다 실행 (승/패 확정·감정 태그·새 거래 즉시 반영, 세션 첫 로드 포함).
+# 같은 내용으로 실패가 반복되면 내용이 바뀔 때까지 재시도하지 않는다. 전부 fail-soft.
 try:
-    if st.session_state.get("gsheet_autobackup") and not st.session_state.get("_gsheet_autobacked"):
-        st.session_state._gsheet_autobacked = True
-        if gsheet_active_method():
+    if st.session_state.get("gsheet_autobackup") and gsheet_active_method():
+        _gb_sig, _gb_n = ledger_backup_signature()
+        if (_gb_n and _gb_sig
+                and _gb_sig != str(st.session_state.get("_gsheet_backup_sig", ""))
+                and _gb_sig != str(st.session_state.get("_gsheet_backup_fail_sig", ""))):
             _gb = backup_ledger(force=False)
-            if _gb.get("ok") and _gb.get("written"):
+            if _gb.get("ok"):
+                st.session_state._gsheet_backup_sig = _gb_sig
+                st.session_state.pop("_gsheet_backup_fail_sig", None)
                 try:
-                    st.toast(t(f"구글 시트 자동 백업 · {_gb['written']}건 저장",
-                               f"Google Sheets auto-backup · {_gb['written']} rows"))
+                    st.toast(t(f"구글 시트 자동 백업 · {_gb.get('written', _gb_n)}건 저장",
+                               f"Google Sheets auto-backup · {_gb.get('written', _gb_n)} rows"))
                 except Exception:
                     pass
+            else:
+                st.session_state._gsheet_backup_fail_sig = _gb_sig
 except Exception:
     pass
 
