@@ -1249,11 +1249,13 @@ def behavior_insights(ledger=None, emotions=None, chase_window_min=60):
             sy = sum((p[1] - my) ** 2 for p in pts) ** 0.5
             if sx > 1e-9 and sy > 1e-9:
                 out["corr"] = round(sum((p[0] - mx) * (p[1] - my) for p in pts) / (sx * sy), 2)
-        # ② 추격 재진입: 손실 거래의 정산시각 후 window분 안에 첫 매수가 있으면 자동감지
+        # ② 추격 재진입: (다른) 손실 거래의 정산시각 후 window분 안에 첫 매수가 있으면 자동감지.
+        # 자기 자신은 제외 — 단일 체결 손실은 첫 매수시각=정산시각이라 자신과 매칭돼 버린다.
         window = max(_safe_float(chase_window_min, 0.0), 0.0) * 60.0
-        loss_times = [r["latest_ts"] for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
+        loss_times = [(r["key"], r["latest_ts"]) for r in recs if r["pnl"] < 0 and r["latest_ts"] > 0]
         for r in recs:
-            detected = r["first_ts"] > 0 and any(0 <= r["first_ts"] - lt <= window for lt in loss_times)
+            detected = r["first_ts"] > 0 and any(
+                k != r["key"] and 0 <= r["first_ts"] - lt <= window for k, lt in loss_times)
             r["_chase"] = detected or r["chase_flag"]
             if r["_chase"]:
                 c = out["chase"]
