@@ -2610,54 +2610,81 @@ with tab_set:
     st.markdown(f'<div class="eyebrow">{t("구글 시트 백업", "Google Sheets backup")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="footnote" style="margin:0 0 10px 0;">{t("거래장부를 내 구글 시트로 한 방향(앱→시트) 백업합니다. 폴리마켓이 오래된 거래를 지워도 시트에 영구 보존됩니다.", "One-way backup (app→sheet) of your trade ledger to your own Google Sheet, so records survive Polymarket dropping old data.")}</div>', unsafe_allow_html=True)
 
-    _gs = gsheet_status()
-    if _gs["ready"]:
-        st.markdown(line(t(f"연결 준비됨 · 서비스계정 {_gs['email']}", f"Ready · service account {_gs['email']}"), "g"), unsafe_allow_html=True)
+    _method = gsheet_active_method()
+    if _method == "webapp":
+        st.markdown(line(t("연결됨 · Apps Script 웹앱 (내 구글 계정)", "Connected · Apps Script web app (your Google account)"), "g"), unsafe_allow_html=True)
+    elif _method == "service_account":
+        st.markdown(line(t("연결됨 · 서비스 계정", "Connected · service account"), "g"), unsafe_allow_html=True)
     else:
-        _need = []
-        if not _gs["lib"]:
-            _need.append(t("gspread 설치(재배포) 필요", "install gspread (redeploy)"))
-        if not _gs["creds"]:
-            _need.append(t("Secrets에 gcp_service_account 필요", "add gcp_service_account to Secrets"))
-        if not _gs["has_url"]:
-            _need.append(t("아래 시트 주소 입력 필요", "enter the sheet URL below"))
-        st.markdown(line(t("설정 필요: ", "Setup needed: ") + " · ".join(_need), "w"), unsafe_allow_html=True)
+        st.markdown(line(t("아직 연결 안 됨 — 아래 ‘간단 연결’에 Apps Script URL을 넣으세요.", "Not connected — paste your Apps Script URL under ‘Simple connect’ below."), "w"), unsafe_allow_html=True)
 
-    with st.expander(t("① 처음 한 번 설정하는 법 (서비스 계정)", "① One-time setup (service account)")):
+    st.markdown(f'<div class="footnote" style="margin:10px 0 2px 0;font-weight:700;color:var(--ink2);">{t("간단 연결 (추천) — Apps Script 웹앱", "Simple connect (recommended) — Apps Script web app")}</div>', unsafe_allow_html=True)
+    with st.expander(t("① 처음 한 번 설정하는 법 (구글 클라우드 · 서비스계정 불필요)", "① One-time setup (no Google Cloud / service account)")):
         st.markdown(t(
-            r"""1. Google Cloud Console → 새 프로젝트 → **Google Sheets API** 사용 설정.
-2. **서비스 계정** 생성 → 키(JSON) 발급 → 다운로드.
-3. Streamlit Cloud → *Manage app → Settings → Secrets* 에 JSON 내용을 아래 형식으로 붙여넣기:
-```toml
-[gcp_service_account]
-type = "service_account"
-project_id = "..."
-private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-client_email = "xxxx@xxxx.iam.gserviceaccount.com"
-# (JSON의 나머지 필드도 모두 그대로)
+            r"""내 구글 계정·내 시트에 직접 저장하는 가장 쉬운 방법입니다.
+1. 브라우저에 `sheets.new` → 새 스프레드시트 생성(이름 아무거나).
+2. 상단 메뉴 **확장 프로그램 → Apps Script**.
+3. 기본 코드 지우고 아래를 붙여넣고 저장(💾):
+```javascript
+function doPost(e) {
+  var SECRET = "";  // (선택) 아래 '공유 토큰'과 같은 값. 비우면 검사 안 함.
+  try {
+    var body = JSON.parse(e.postData.contents);
+    if (SECRET && String(body.token || "") !== SECRET)
+      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    var rows = body.rows || [];
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
+    sh.clearContents();
+    if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
+    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
 ```
-4. 구글 시트를 하나 만들고, 위 **client_email 주소를 '편집자'로 공유**.
-5. 그 시트의 주소(URL)를 아래에 붙여넣고 **저장** → 완료.""",
-            r"""1. Google Cloud Console → new project → enable **Google Sheets API**.
-2. Create a **service account** → create a JSON key → download it.
-3. In Streamlit Cloud → *Manage app → Settings → Secrets*, paste the JSON as TOML:
-```toml
-[gcp_service_account]
-type = "service_account"
-project_id = "..."
-private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-client_email = "xxxx@xxxx.iam.gserviceaccount.com"
-# (all other JSON fields too)
+4. **배포 → 새 배포 → 유형: 웹 앱**, 실행: **나**, 액세스: **모든 사용자** → 배포 → 구글 로그인 승인.
+5. 나오는 **웹 앱 URL**(.../exec)을 복사해 아래에 붙여넣기.
+* 보호하려면 코드의 SECRET과 아래 '공유 토큰'을 같은 값으로 두세요.""",
+            r"""The easiest way — writes to your own sheet with your own Google account.
+1. Go to `sheets.new` → create a spreadsheet.
+2. Menu **Extensions → Apps Script**.
+3. Replace the default code with the block below and save:
+```javascript
+function doPost(e) {
+  var SECRET = "";
+  try {
+    var body = JSON.parse(e.postData.contents);
+    if (SECRET && String(body.token || "") !== SECRET)
+      return ContentService.createTextOutput(JSON.stringify({ok:false,error:"bad token"})).setMimeType(ContentService.MimeType.JSON);
+    var rows = body.rows || [];
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName("ledger") || ss.insertSheet("ledger");
+    sh.clearContents();
+    if (rows.length) sh.getRange(1,1,rows.length,rows[0].length).setValues(rows);
+    return ContentService.createTextOutput(JSON.stringify({ok:true,written:Math.max(rows.length-1,0)})).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
 ```
-4. Create a Google Sheet and **share it (Editor) with that client_email**.
-5. Paste the sheet URL below and **Save** → done."""))
+4. **Deploy → New deployment → Web app**, Execute as **Me**, Access **Anyone** → Deploy → authorize.
+5. Copy the **web app URL** (.../exec) and paste it below.
+* To protect it, set SECRET in the code and the 'Shared token' below to the same value."""))
 
-    st.session_state.gsheet_url = st.text_input(
-        t("구글 시트 주소 (URL)", "Google Sheet URL"),
-        value=str(st.session_state.get("gsheet_url", "") or ""),
-        placeholder="https://docs.google.com/spreadsheets/d/....",
-        key="gsheet_url_input",
+    st.session_state.gsheet_webapp_url = st.text_input(
+        t("Apps Script URL", "Apps Script URL"),
+        value=str(st.session_state.get("gsheet_webapp_url", "") or ""),
+        placeholder="https://script.google.com/macros/s/..../exec",
+        key="gsheet_webapp_url_input",
     )
+    st.session_state.gsheet_webapp_token = st.text_input(
+        t("공유 토큰 (선택)", "Shared token (optional)"),
+        value=str(st.session_state.get("gsheet_webapp_token", "") or ""),
+        placeholder=t("코드의 SECRET과 같은 값 (비워도 됨)", "same as SECRET in the code (optional)"),
+        key="gsheet_webapp_token_input",
+    )
+
     st.session_state.gsheet_autobackup = st.checkbox(
         t("앱 열 때 자동 백업 (세션당 1회)", "Auto-backup on app load (once per session)"),
         value=bool(st.session_state.get("gsheet_autobackup", False)),
@@ -2669,17 +2696,32 @@ client_email = "xxxx@xxxx.iam.gserviceaccount.com"
         st.markdown(f'<div class="footnote">{t(f"마지막 백업: {_gs_last} · {_gs_lastn}건", f"Last backup: {_gs_last} · {_gs_lastn} rows")}</div>', unsafe_allow_html=True)
 
     if st.button(t("지금 구글 시트로 백업", "Back up to Google Sheets now"), use_container_width=True, key="gsheet_backup_now"):
-        _b = backup_ledger_to_gsheet(force=True)
+        _b = backup_ledger(force=True)
         if _b["ok"]:
             st.success(t(f"백업 완료 · {_b['written']}건을 시트에 저장했습니다.", f"Backed up · {_b['written']} rows written."))
         else:
             _emap = {
+                "not_configured": t("먼저 Apps Script URL(또는 서비스계정)을 설정하세요.", "Set an Apps Script URL (or service account) first."),
+                "no_url": t("Apps Script URL을 먼저 입력하세요.", "Enter the Apps Script URL first."),
                 "no_lib": t("gspread 미설치 — requirements 반영 후 재배포하세요.", "gspread not installed — redeploy after requirements update."),
                 "no_creds": t("Secrets에 gcp_service_account가 없습니다.", "Missing gcp_service_account in Secrets."),
-                "no_url": t("시트 주소를 먼저 입력하세요.", "Enter the sheet URL first."),
                 "empty_ledger": t("백업할 거래장부가 비어 있습니다.", "Trade ledger is empty."),
             }
             st.markdown(line(_emap.get(_b["error"], t(f"백업 실패 — {_b['error']}", f"Backup failed — {_b['error']}")), "b"), unsafe_allow_html=True)
+
+    with st.expander(t("고급: 서비스 계정 (gspread) 방식", "Advanced: service account (gspread)")):
+        _gs = gsheet_status()
+        if _gs["ready"]:
+            st.markdown(line(t(f"서비스계정 준비됨 · {_gs['email']}", f"Service account ready · {_gs['email']}"), "g"), unsafe_allow_html=True)
+        st.markdown(t(
+            r"""구글 클라우드에서 서비스계정 JSON 키를 발급해 Streamlit Secrets의 `[gcp_service_account]`에 넣고, 시트를 그 client_email에 편집자로 공유한 뒤 아래에 시트 URL을 입력합니다. (위 Apps Script 방식이 더 쉽습니다.)""",
+            r"""Create a service-account JSON key in Google Cloud, put it in Streamlit Secrets as `[gcp_service_account]`, share the sheet (Editor) with its client_email, then paste the sheet URL below. (The Apps Script method above is simpler.)"""))
+        st.session_state.gsheet_url = st.text_input(
+            t("구글 시트 주소 (URL) — 서비스계정용", "Google Sheet URL — for service account"),
+            value=str(st.session_state.get("gsheet_url", "") or ""),
+            placeholder="https://docs.google.com/spreadsheets/d/....",
+            key="gsheet_url_input",
+        )
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -3064,8 +3106,8 @@ st.markdown(
 try:
     if st.session_state.get("gsheet_autobackup") and not st.session_state.get("_gsheet_autobacked"):
         st.session_state._gsheet_autobacked = True
-        if gsheet_status()["ready"]:
-            _gb = backup_ledger_to_gsheet(force=False)
+        if gsheet_active_method():
+            _gb = backup_ledger(force=False)
             if _gb.get("ok") and _gb.get("written"):
                 try:
                     st.toast(t(f"구글 시트 자동 백업 · {_gb['written']}건 저장",

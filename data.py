@@ -1271,7 +1271,74 @@ def backup_ledger_to_gsheet(force=False):
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "written": 0}
 
+def _ledger_rows_for_export():
+    """Ledger as a table (header + rows, newest first). Shared by both backup methods."""
+    ledger = st.session_state.get("trade_ledger") or {}
+    if not isinstance(ledger, dict):
+        ledger = {}
+    recs = sorted(ledger.values(), key=lambda x: str(x.get("date", "")), reverse=True)
+    body = [list(GSHEET_LEDGER_HEADER)]
+    for rec in recs:
+        if isinstance(rec, dict):
+            body.append([str(rec.get(f, "")) for f in GSHEET_LEDGER_FIELDS])
+    return body, len(recs)
+
+def backup_ledger_via_webapp(force=False):
+    """Push the ledger to the user's own Google Sheet through their Apps Script web app URL
+    (no service account / Google Cloud). POSTs {"rows":[...], "token":...}. Fail-soft."""
+    url = str(st.session_state.get("gsheet_webapp_url", "") or "").strip()
+    if not url:
+        return {"ok": False, "error": "no_url", "written": 0}
+    body, n = _ledger_rows_for_export()
+    if n == 0 and not force:
+        return {"ok": False, "error": "empty_ledger", "written": 0}
+    try:
+        payload = {"rows": body}
+        token = str(st.session_state.get("gsheet_webapp_token", "") or "").strip()
+        if token:
+            payload["token"] = token
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            txt = resp.read().decode("utf-8", "ignore")
+        ok_resp, written = True, n
+        try:
+            j = json.loads(txt)
+            ok_resp = bool(j.get("ok", True))
+            written = int(j.get("written", n))
+        except Exception:
+            pass
+        if not ok_resp:
+            return {"ok": False, "error": f"webapp: {txt[:140]}", "written": 0}
+        st.session_state["_gsheet_last_backup"] = datetime.now(KST).isoformat(timespec="minutes")
+        st.session_state["_gsheet_last_count"] = written
+        return {"ok": True, "error": "", "written": written}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "written": 0}
+
+def gsheet_active_method():
+    """Which backup method is configured. Apps Script (webapp) is preferred when set."""
+    if str(st.session_state.get("gsheet_webapp_url", "") or "").strip():
+        return "webapp"
+    if gsheet_status()["ready"]:
+        return "service_account"
+    return ""
+
+def backup_ledger(force=False):
+    """Single entry point: dispatch to whichever backup method is configured."""
+    m = gsheet_active_method()
+    if m == "webapp":
+        r = backup_ledger_via_webapp(force); r["method"] = "webapp"; return r
+    if m == "service_account":
+        r = backup_ledger_to_gsheet(force); r["method"] = "service_account"; return r
+    return {"ok": False, "error": "not_configured", "written": 0, "method": ""}
+
 __all__ = [
+    '_ledger_rows_for_export',
+    'backup_ledger',
+    'backup_ledger_via_webapp',
+    'gsheet_active_method',
     'GSHEET_LEDGER_FIELDS',
     'GSHEET_LEDGER_HEADER',
     'GSHEET_SCOPES',
