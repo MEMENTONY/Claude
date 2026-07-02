@@ -699,7 +699,7 @@ def portfolio_card_html(ar):
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(ar.get("name"))}</div>
-      <div class="pf-sub">{esc(ar.get("outcome"))}</div>
+      <div class="pf-pills">{outcome_pill(ar.get("outcome"))}{cents_pill(ar.get("cur", 0))}</div>
     </div>
     <span class="state {ar.get("kind", "i")}">{esc(ar.get("title"))}</span>
   </div>

@@ -53,9 +53,9 @@ st.markdown(
   --hairline:  #e9eaee;
   --hairline-2:#f0f1f4;
 
-  --accent:      #3b4ef0;   /* deep indigo — the one accent */
-  --accent-press:#2c3ed4;
-  --accent-soft: #eef0fe;
+  --accent:      #2e7cf6;   /* Polymarket blue — the one accent */
+  --accent-press:#1b5fd9;
+  --accent-soft: #eaf2fe;
 
   --green:      #0f7a43;  --green-soft: #e7f5ec;  --green-soft2:#eaf6f0;
   --amber:      #a45e07;  --amber-soft: #fdf3e3;
@@ -125,7 +125,7 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > 
 }
 .today-panel-dot::after {
   content: ""; position:absolute; inset: 9px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 0 5px rgba(59,78,240,.10);
+  background: var(--accent); box-shadow: 0 0 0 5px rgba(46,124,246,.12);
 }
 .today-goal-kpi {
   margin: 0 0 12px 0;
@@ -332,7 +332,7 @@ h1,h2,h3,h4,p,span,div,label { color: var(--ink); }
 }
 .masthead .name::before {
   content: ""; width: 13px; height: 13px; border-radius: 4px; transform: rotate(45deg);
-  background: linear-gradient(135deg, var(--accent), #6b7bff);
+  background: linear-gradient(135deg, var(--accent), #6fb0ff);
 }
 .masthead .tag { font-size: 12px; color: var(--gray2); margin-top: 4px; }
 .mh-chip {
@@ -564,7 +564,7 @@ div[data-testid="stTextInput"] input:focus,
 div[data-testid="stNumberInput"] input:focus,
 textarea:focus {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 4px rgba(59,78,240,.12) !important;
+  box-shadow: 0 0 0 4px rgba(46,124,246,.14) !important;
 }
 div[data-baseweb="select"] > div {
   background: var(--surface) !important; border: 1px solid var(--hairline) !important;
@@ -2122,7 +2122,8 @@ with tab_review:
   <div class="pf-card-head">
     <div>
       <div class="pf-title">{esc(item.get("market"))}</div>
-      <div class="pf-sub">{esc(item.get("outcome"))} · {esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
+      <div class="pf-pills">{outcome_pill(item.get("outcome"))}{cents_pill(safe_trade_float(item.get("avg_buy_price"), 0))}</div>
+      <div class="pf-sub">{esc(item.get("status"))} · {esc(item.get("source", ""))}</div>
     </div>
     <span class="state i">{esc(item.get("latest_dt") or item.get("created_at", ""))}</span>
   </div>
