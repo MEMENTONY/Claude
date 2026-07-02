@@ -164,7 +164,7 @@ def render_live_price_panel(wm):
             label_visibility="collapsed",
         )
     with cc2:
-        if st.button(t("새로고침", "Refresh"), key=f"live_refresh_{tok}", use_container_width=True):
+        if st.button(t("새로고침", "Refresh"), key=f"live_refresh_{tok}", width="stretch"):
             try:
                 fetch_live_token_price.clear()
                 fetch_price_history.clear()
@@ -252,7 +252,7 @@ def render_live_price_panel(wm):
                     .mark_rule(strokeDash=[4, 4], color="#a2a5af")
                     .encode(y="y:Q")
                 )
-            st.altair_chart(alt.layer(*layers).properties(height=210).configure_view(strokeWidth=0), use_container_width=True)
+            st.altair_chart(alt.layer(*layers).properties(height=210).configure_view(strokeWidth=0), width="stretch")
         except Exception:
             st.line_chart(dfh.set_index("ts")["p"], height=210)
 
@@ -543,7 +543,7 @@ def render_trade_pnl_summary(auto_trades, date_label="", title=None, key_prefix=
                         save_local_state()
                         st.rerun()
                 if st.button(t("이 거래를 거래복기로 보내기", "Send this trade to Review"),
-                             key=f"send_one_{key_prefix}_{idx}", use_container_width=True):
+                             key=f"send_one_{key_prefix}_{idx}", width="stretch"):
                     added = add_review_items_from_trade_groups([r], source)
                     if added:
                         st.success(t("거래복기에 추가했습니다.", "Added to Trade Review."))
@@ -983,7 +983,7 @@ def _market_table(rows, section_key):
             unsafe_allow_html=True)
         with cbtn:
             keytok = tok if tok else f"idx_{section_key}_{i}"
-            if st.button(t("선택", "Select"), key=f"sel_{section_key}_{i}_{keytok}", use_container_width=True):
+            if st.button(t("선택", "Select"), key=f"sel_{section_key}_{i}_{keytok}", width="stretch"):
                 st.session_state._entry_sel = {**m, "_disp_price": disp, "_sel_key": keytok}
                 st.session_state._entry_active = None
                 st.rerun()
@@ -1167,7 +1167,7 @@ def _selected_entry_form(entry_category, entry_subcategory):
             dup_game = st.number_input(t("중복 Game/Map 노출($)", "Duplicate game/map exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_game")
             dup_side = st.number_input(t("같은 방향 총 노출($)", "Same-side exposure ($)"), min_value=0.0, value=0.0, key="sel_dup_side")
 
-    go = st.button(t("분석", "Analyze"), key=f"sel_entry_analyze_{keytok}", use_container_width=True)
+    go = st.button(t("분석", "Analyze"), key=f"sel_entry_analyze_{keytok}", width="stretch")
 
     def _strategy_context_text(payload):
         if not isinstance(payload, dict) or not payload.get("selected_fields"):
@@ -1228,7 +1228,7 @@ def _selected_entry_form(entry_category, entry_subcategory):
         if st.session_state.get("watching_market", {}).get("token_id"):
             st.markdown(f'<div class="eyebrow" style="margin-top:16px;">{t("실시간 가격 추적", "Live price watch")}</div>', unsafe_allow_html=True)
             render_live_price_panel(st.session_state.watching_market)
-        if st.button(t("AI 분석 탭으로 보내기", "Send to AI tab"), key=f"toai_{keytok}", use_container_width=True):
+        if st.button(t("AI 분석 탭으로 보내기", "Send to AI tab"), key=f"toai_{keytok}", width="stretch"):
             r = st.session_state.last_entry
             saved_strategy = st.session_state.get("entry_self_strategy", {}).get(keytok, {})
             memo_for_ai = str(saved_strategy.get("ai_memo", "") or "")
