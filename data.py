@@ -1175,6 +1175,97 @@ def habit_report(trades):
     return {**sm, "habit_level": level, "habit_title": title, "habit_insights": insights}
 
 # ---------------------------------------------------------------------------
+# 승/패 자동 확정 — 폴리마켓 마켓 결과(gamma-api)로 미확정 보유 거래를 자동 판정.
+# 수동 확정(trade_resolutions 기존 값)은 절대 덮어쓰지 않으며, 전부 fail-soft.
+# ---------------------------------------------------------------------------
+
+def fetch_markets_by_token_ids(token_ids, chunk=15):
+    """gamma-api에서 CLOB 토큰 id들로 마켓 종료/결과를 조회해 {token_id: 판정}으로 돌려준다.
+    판정 verdict: 'won'/'lost'(마켓 종료·가격 확정) 또는 ''(미종료/판정불가).
+    네트워크/파싱 오류가 난 배치는 조용히 건너뛴다(응답에 없는 토큰 = 판정불가)."""
+    out = {}
+    ids = [str(x).strip() for x in (token_ids or []) if str(x).strip()]
+    step = max(int(chunk or 1), 1)
+    for i in range(0, len(ids), step):
+        batch = ids[i:i + step]
+        try:
+            qs = urllib.parse.urlencode({"clob_token_ids": ",".join(batch), "limit": len(batch)})
+            api = f"https://gamma-api.polymarket.com/markets?{qs}"
+            req = urllib.request.Request(api, headers={"User-Agent": "Memento/5.0", "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                payload = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, list):
+            markets = payload
+        elif isinstance(payload, dict):
+            markets = payload.get("markets") if isinstance(payload.get("markets"), list) else []
+        else:
+            markets = []
+        for m in markets:
+            if not isinstance(m, dict):
+                continue
+            toks = [str(x) for x in parse_list(m.get("clobTokenIds"))]
+            prices = parse_list(m.get("outcomePrices"))
+            closed = bool(m.get("closed")) or str(m.get("umaResolutionStatus", "") or "").lower() == "resolved"
+            for pos, tok in enumerate(toks):
+                verdict = ""
+                if closed and pos < len(prices):
+                    p = safe_trade_float(prices[pos], -1.0)
+                    if p >= 0.99:
+                        verdict = "won"
+                    elif 0.0 <= p <= 0.01:
+                        verdict = "lost"
+                out[tok] = {"closed": closed, "verdict": verdict,
+                            "question": str(m.get("question", "") or "")}
+    return out
+
+def auto_resolve_trades():
+    """잔여 보유가 있는 미확정 거래그룹을 폴리마켓 결과로 자동 승/패 확정한다.
+    이미 확정된 key(수동 포함)는 건드리지 않고, 확정되면 장부 갱신 + 저장까지 수행. Fail-soft."""
+    try:
+        res = dict(st.session_state.get("trade_resolutions") or {})
+        candidates = {}
+        for trades in (st.session_state.get("auto_trades") or [], st.session_state.get("paste_trades") or []):
+            if not trades:
+                continue
+            for r in group_auto_trades_for_pnl(trades):
+                key = str(r.get("key") or "")
+                tok = str(r.get("token_id") or "").strip()
+                if not key or key in res:
+                    continue
+                if safe_trade_float(r.get("remaining_shares"), 0.0) <= 1e-6:
+                    continue
+                if not (tok.isdigit() and len(tok) >= 10):
+                    continue  # 실제 CLOB 토큰 id가 있어야 결과 조회 가능 (붙여넣기 거래 등은 수동 확정)
+                candidates[key] = tok
+        if not candidates:
+            return {"ok": True, "checked": 0, "won": 0, "lost": 0, "open": 0, "unknown": 0, "error": ""}
+        verdicts = fetch_markets_by_token_ids(sorted(set(candidates.values())))
+        won = lost = still_open = unknown = 0
+        for key, tok in candidates.items():
+            v = verdicts.get(tok)
+            if not v:
+                unknown += 1
+            elif v["verdict"] == "won":
+                res[key] = "won"
+                won += 1
+            elif v["verdict"] == "lost":
+                res[key] = "lost"
+                lost += 1
+            else:
+                still_open += 1
+        if won or lost:
+            st.session_state.trade_resolutions = res
+            update_trade_ledger()
+            save_local_state()
+        return {"ok": True, "checked": len(candidates), "won": won, "lost": lost,
+                "open": still_open, "unknown": unknown, "error": ""}
+    except Exception as e:
+        return {"ok": False, "checked": 0, "won": 0, "lost": 0, "open": 0, "unknown": 0,
+                "error": f"{type(e).__name__}: {e}"}
+
+# ---------------------------------------------------------------------------
 # Google Sheets backup — mirror the durable trade ledger to a Google Sheet.
 # One-way (app -> sheet), service-account auth via Streamlit Secrets.
 # gspread/google-auth are imported lazily and every entry point is fail-soft, so
@@ -1336,6 +1427,8 @@ def backup_ledger(force=False):
 
 __all__ = [
     '_ledger_rows_for_export',
+    'auto_resolve_trades',
+    'fetch_markets_by_token_ids',
     'backup_ledger',
     'backup_ledger_via_webapp',
     'gsheet_active_method',

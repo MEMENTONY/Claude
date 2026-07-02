@@ -1943,6 +1943,30 @@ with tab4:
             else:
                 st.markdown(line(t(f"거래내역 {_res['found']}건 확인 · 새로 추가 {_res['added']}건 (장부에 저장됨)", f"Found {_res['found']} trades · added {_res['added']} (saved to ledger)"), "g"), unsafe_allow_html=True)
 
+        # --- 승/패 자동 확정: 폴리마켓 결과를 조회해 잔여 보유 미확정 거래를 자동 판정 ---
+        _arm = str(st.session_state.pop("_auto_resolve_msg", "") or "")
+        if _arm:
+            st.markdown(line(_arm, "g"), unsafe_allow_html=True)
+        if st.button(t("승/패 자동 확정 (폴리마켓 결과 조회)", "Auto-resolve Won/Lost (fetch market results)"),
+                     width="stretch", key="auto_resolve_btn",
+                     help=t("잔여 보유가 있는 미확정 거래의 마켓이 종료됐으면 자동으로 승/패를 확정합니다. 수동 확정은 덮어쓰지 않습니다.",
+                            "If a market with unresolved held shares has closed, marks it Won/Lost automatically. Never overrides manual marks.")):
+            with st.spinner(t("폴리마켓 결과 확인 중", "Checking Polymarket results")):
+                _ar = auto_resolve_trades()
+            if not _ar["ok"]:
+                st.markdown(line(t(f"자동 확정 실패 — {_ar['error']}", f"Auto-resolve failed — {_ar['error']}"), "b"), unsafe_allow_html=True)
+            elif _ar["won"] or _ar["lost"]:
+                st.session_state._auto_resolve_msg = t(
+                    f"자동 확정 완료 · 승 {_ar['won']} · 패 {_ar['lost']} · 미종료 {_ar['open']}건 · 판정불가 {_ar['unknown']}건",
+                    f"Auto-resolved · won {_ar['won']} · lost {_ar['lost']} · open {_ar['open']} · unknown {_ar['unknown']}")
+                st.rerun()
+            elif _ar["checked"] == 0:
+                st.markdown(line(t("자동 확정 대상이 없습니다 — 잔여 보유가 있는 미확정 거래가 없어요.",
+                                   "Nothing to auto-resolve — no unresolved trades with held shares."), "i"), unsafe_allow_html=True)
+            else:
+                st.markdown(line(t(f"아직 종료된 마켓이 없습니다 · 검사 {_ar['checked']}건 (미종료 {_ar['open']} · 판정불가 {_ar['unknown']})",
+                                   f"No closed markets yet · checked {_ar['checked']} (open {_ar['open']} · unknown {_ar['unknown']})"), "i"), unsafe_allow_html=True)
+
         st.markdown("<hr>", unsafe_allow_html=True)
         if st.session_state.auto_trades:
             sd, ed, date_label = render_trade_date_controls()
